@@ -30,7 +30,7 @@ jobs:
       - name: Install prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential nasm uuid-dev python3-pip mtools dosfstools qemu-system-x86
+          sudo apt-get install -y build-essential nasm uuid-dev mtools dosfstools qemu-system-x86
 
       - name: Checkout pinned EDK II and SCT
         run: |
@@ -42,7 +42,6 @@ jobs:
 
       - name: Build official SCT
         run: |
-          python3 -m pip install --upgrade -r edk2/pip-requirements.txt
           chmod +x SctPkg/build.sh
           ./SctPkg/build.sh X64 GCC RELEASE
           SCT_PACKAGE="$GITHUB_WORKSPACE/Build/UefiSct/RELEASE_GCC5/SctPackageX64"
