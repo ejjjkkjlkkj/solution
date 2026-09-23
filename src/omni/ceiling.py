@@ -13,6 +13,8 @@ REQUIRED_TOOLS = {
     "frama-c": ("frama-c",),
 }
 
+# These are top-level evidence groups. A group is PASS only when its own
+# workflow has closed every internal gate. Missing groups are blockers.
 REQUIRED_GATES = frozenset(
     {
         "core_semantics",
@@ -34,14 +36,27 @@ ALLOWED_STATUSES = frozenset(
         "FAILURE",
         "NOT_RUN",
         "MISSING",
-        "BLOCKED",
-        "SKIP",
-        "SKIPPED",
         "CANCELLED",
+        "SKIPPED",
         "TIMED_OUT",
-        "ACTION_REQUIRED",
         "NEUTRAL",
+        "ACTION_REQUIRED",
         "STALE",
+    }
+)
+
+# Once every software gate is closed, uncertainty is allowed to remain only
+# in phenomena that intrinsically require the physical target.
+HARDWARE_ONLY_GATES = frozenset(
+    {
+        "physical_oem_uefi_execution",
+        "physical_pre_os_keyboard_scan_and_focus_timing",
+        "physical_hda_codec_topology",
+        "physical_amplifier_eapd_path",
+        "physical_speaker_speech_quality",
+        "physical_interrupt_latency_and_jitter",
+        "physical_tpm_quote_and_measurements",
+        "oem_electrical_and_firmware_specific_behavior",
     }
 )
 
@@ -56,36 +71,44 @@ def probe() -> dict[str, str | None]:
     }
 
 
-def evaluate(statuses: Mapping[str, str]) -> dict[str, object]:
-    supplied: dict[str, str] = {}
-    for name, status in statuses.items():
-        if not isinstance(name, str) or not name:
-            raise ValueError("gate names must be non-empty strings")
-        if not isinstance(status, str):
-            raise ValueError(f"gate {name!r} status must be a string")
-        supplied[name] = status
+def hardware_boundary() -> dict[str, object]:
+    return {
+        "status": "HARDWARE_ONLY",
+        "remaining": sorted(HARDWARE_ONLY_GATES),
+    }
 
-    missing = sorted(REQUIRED_GATES - supplied.keys())
-    unexpected = sorted(supplied.keys() - REQUIRED_GATES)
-    invalid = sorted(
-        name
-        for name in REQUIRED_GATES & supplied.keys()
-        if supplied[name] not in ALLOWED_STATUSES
-    )
+
+def evaluate(statuses: Mapping[str, str]) -> dict[str, object]:
+    if not isinstance(statuses, Mapping):
+        raise ValueError("software ceiling statuses must be a mapping")
+
+    normalized: dict[str, str] = {}
+    invalid: list[str] = []
+    for name, status in statuses.items():
+        if not isinstance(name, str) or not isinstance(status, str):
+            raise ValueError("software ceiling gate names and statuses must be strings")
+        normalized[name] = status
+        if status not in ALLOWED_STATUSES:
+            invalid.append(name)
+
+    unexpected = sorted(set(normalized) - REQUIRED_GATES)
+    missing = sorted(REQUIRED_GATES - normalized.keys())
     failed = sorted(
         name
-        for name in REQUIRED_GATES & supplied.keys()
-        if supplied[name] in ALLOWED_STATUSES and supplied[name] != "PASS"
+        for name in REQUIRED_GATES & normalized.keys()
+        if name not in invalid and normalized[name] != "PASS"
     )
+    invalid = sorted(invalid)
+    blockers = sorted(set(missing) | set(failed) | set(invalid) | set(unexpected))
+    passed = not blockers
 
-    blockers = sorted(set(missing) | set(unexpected) | set(invalid) | set(failed))
     return {
-        "status": "SOFTWARE_CEILING_PASS" if not blockers else "SOFTWARE_INCOMPLETE",
+        "status": "SOFTWARE_CEILING_PASS" if passed else "SOFTWARE_INCOMPLETE",
         "blockers": blockers,
         "missing": missing,
         "failed": failed,
         "invalid": invalid,
         "unexpected": unexpected,
         "required": sorted(REQUIRED_GATES),
-        "evidence_count": len(supplied),
+        "remaining_hardware_gates": sorted(HARDWARE_ONLY_GATES) if passed else [],
     }

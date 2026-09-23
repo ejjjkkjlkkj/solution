@@ -3,7 +3,7 @@ from pathlib import Path
 from omni.semantic import SemanticModel
 from omni.flight import build, verify
 from omni.firmware import inspect
-from omni.ceiling import REQUIRED_GATES, evaluate
+from omni.ceiling import HARDWARE_ONLY_GATES, REQUIRED_GATES, evaluate, hardware_boundary
 
 class CoreTests(unittest.TestCase):
     def test_semantic_password_redaction(self):

@@ -10,7 +10,7 @@ from . import ceiling, firmware, ifr
 def main() -> int:
     parser = argparse.ArgumentParser(prog="omni")
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("toolchain")
+    sub.add_parser("toolchain")\n    sub.add_parser("hardware-boundary")
 
     fw = sub.add_parser("firmware-inspect")
     fw.add_argument("image")

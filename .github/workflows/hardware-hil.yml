@@ -174,6 +174,25 @@ jobs:
           )
           $expectedChallenge = (Get-Content hil\omni-challenge.txt -Raw).Trim().ToLowerInvariant()
           if ($expectedChallenge -notmatch '^[0-9a-f]{64}
+          if (-not $p.WaitForExit(60000)) {
+            $p.Kill()
+            throw 'QEMU timeout'
+          }
+          $logs = @()
+          if (Test-Path qemu-debug.log) { $logs += Get-Content qemu-debug.log -Raw }
+          if (Test-Path qemu-serial.log) { $logs += Get-Content qemu-serial.log -Raw }
+          $joined = ($logs -join [Environment]::NewLine)
+          foreach ($marker in @('OMNI_CHALLENGE_PASS','OMNI_HII_PASS','OMNI_EVIDENCE_PASS','OMNI_UEFI_PASS')) {
+            if ($joined -notmatch [regex]::Escape($marker)) {
+              throw "QEMU proof marker missing: $marker"
+            }
+          }
+          if ($joined -notmatch [regex]::Escape("OMNI_CHALLENGE=$expectedChallenge")) {
+            throw 'QEMU challenge does not match this commit'
+          }
+          if ($joined -match 'OMNI_(CHALLENGE|HII|EVIDENCE|UEFI)_FAIL') {
+            throw 'QEMU emitted a failure marker'
+          }
 
       - name: Execute same UEFI binary under VMware Workstation
         run: |
@@ -187,6 +206,8 @@ jobs:
 
           $expectedChallenge = (Get-Content hil\omni-challenge.txt -Raw).Trim().ToLowerInvariant()
           if ($expectedChallenge -notmatch '^[0-9a-f]{64}
+          Copy-Item hil\omni-boot.vmdk vmware-hil\omni-boot.vmdk -Force
+          $serial = (Join-Path (Resolve-Path vmware-hil).Path 'serial.log').Replace('\','/')
           $vmxLines = @(
             '.encoding = "UTF-8"',
             'config.version = "8"',
@@ -271,12 +292,6 @@ jobs:
             if ($joined -notmatch [regex]::Escape($marker)) {
               throw "QEMU proof marker missing: $marker"
             }
-          }
-          if ($joined -notmatch [regex]::Escape("OMNI_CHALLENGE=$expectedChallenge")) {
-            throw 'QEMU challenge does not match this commit'
-          }
-          if ($joined -match 'OMNI_(CHALLENGE|HII|EVIDENCE|UEFI)_FAIL') {
-            throw 'QEMU emitted a failure marker'
           }
 
       - name: Execute same UEFI binary under VMware Workstation
@@ -445,12 +460,6 @@ jobs:
             if ($joined -notmatch [regex]::Escape($marker)) {
               throw "QEMU proof marker missing: $marker"
             }
-          }
-          if ($joined -notmatch [regex]::Escape("OMNI_CHALLENGE=$expectedChallenge")) {
-            throw 'QEMU challenge does not match this commit'
-          }
-          if ($joined -match 'OMNI_(CHALLENGE|HII|EVIDENCE|UEFI)_FAIL') {
-            throw 'QEMU emitted a failure marker'
           }
 
       - name: Execute same UEFI binary under VMware Workstation
