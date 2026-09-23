@@ -1,13 +1,55 @@
+import json
+import tempfile
 import unittest
+from pathlib import Path
 
 from tools.verify_action_pins import verify
 
 
 class ActionPinTests(unittest.TestCase):
-    def test_all_external_actions_are_immutable_sha_pinned(self):
+    def test_all_external_actions_are_immutable_and_lock_bound(self):
         result = verify()
         self.assertEqual(result["status"], "PASS", result["violations"])
         self.assertGreater(result["checked"], 0)
+
+    def _verify_fixture(self, workflow: str, actions: dict[str, str] | None = None):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            (workflows / "test.yml").write_text(workflow, encoding="utf-8")
+            (root / "toolchains.lock.json").write_text(
+                json.dumps({"github_actions": actions or {}}),
+                encoding="utf-8",
+            )
+            return verify(root)
+
+    def test_mutable_docker_reference_is_rejected(self):
+        result = self._verify_fixture("jobs:\n  x:\n    steps:\n      - uses: docker://ghcr.io/acme/tool:latest\n")
+        self.assertEqual(result["status"], "FAIL")
+        self.assertEqual(result["violations"][0]["reason"], "DOCKER_NOT_DIGEST_PINNED")
+
+    def test_digest_pinned_docker_reference_is_allowed(self):
+        digest = "a" * 64
+        result = self._verify_fixture(
+            f"jobs:\n  x:\n    steps:\n      - uses: docker://ghcr.io/acme/tool@sha256:{digest}\n"
+        )
+        self.assertEqual(result["status"], "PASS", result["violations"])
+
+    def test_locked_action_must_use_exact_locked_sha(self):
+        result = self._verify_fixture(
+            f"jobs:\n  x:\n    steps:\n      - uses: actions/checkout@{'b' * 40}\n",
+            {"checkout": "a" * 40},
+        )
+        self.assertEqual(result["status"], "FAIL")
+        self.assertEqual(result["violations"][0]["reason"], "ACTION_LOCK_MISMATCH")
+
+    def test_untracked_external_action_is_rejected(self):
+        result = self._verify_fixture(
+            f"jobs:\n  x:\n    steps:\n      - uses: octo/example@{'a' * 40}\n"
+        )
+        self.assertEqual(result["status"], "FAIL")
+        self.assertEqual(result["violations"][0]["reason"], "ACTION_NOT_LOCKED")
 
 
 if __name__ == "__main__":

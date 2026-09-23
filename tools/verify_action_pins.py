@@ -6,33 +6,124 @@ import pathlib
 import re
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-WORKFLOWS = ROOT / ".github" / "workflows"
-USES_RE = re.compile(r"\buses:\s*([^\s#]+)")
-PINNED_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+@[0-9a-fA-F]{40}$")
+USES_RE = re.compile(r"^\s*(?:-\s*)?uses:\s*([^\s#]+)\s*(?:#.*)?$")
+ACTION_REF_RE = re.compile(
+    r"^([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*)@([0-9a-fA-F]{40})$"
+)
+DOCKER_DIGEST_RE = re.compile(r"^docker://[^@\s]+@sha256:[0-9a-fA-F]{64}$")
+SHA40_RE = re.compile(r"^[0-9a-fA-F]{40}$")
+ACTION_LOCK_KEYS = {
+    "actions/checkout": "checkout",
+    "actions/setup-python": "setup_python",
+    "actions/upload-artifact": "upload_artifact",
+    "actions/download-artifact": "download_artifact",
+    "actions/attest": "attest",
+}
 
 
-def verify() -> dict[str, object]:
+def _locked_actions(root: pathlib.Path) -> dict[str, str]:
+    lock_path = root / "toolchains.lock.json"
+    try:
+        lock = json.loads(lock_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"cannot read toolchain lock: {exc}") from exc
+
+    raw = lock.get("github_actions")
+    if not isinstance(raw, dict):
+        raise ValueError("toolchain lock is missing github_actions mapping")
+
+    locked: dict[str, str] = {}
+    for action, key in ACTION_LOCK_KEYS.items():
+        if key not in raw:
+            continue
+        sha = raw[key]
+        if not isinstance(sha, str) or not SHA40_RE.fullmatch(sha):
+            raise ValueError(f"invalid SHA for github_actions.{key}")
+        locked[action] = sha.lower()
+    return locked
+
+
+def verify(root: pathlib.Path = ROOT) -> dict[str, object]:
+    workflows = root / ".github" / "workflows"
     violations: list[dict[str, str]] = []
     checked = 0
-    for path in sorted(WORKFLOWS.glob("*.y*ml")):
+
+    try:
+        locked_actions = _locked_actions(root)
+    except ValueError as exc:
+        return {
+            "schema": "omniexec.action-pins.v2",
+            "status": "FAIL",
+            "checked": 0,
+            "violations": [
+                {
+                    "file": "toolchains.lock.json",
+                    "line": "0",
+                    "uses": "",
+                    "reason": f"INVALID_LOCK: {exc}",
+                }
+            ],
+        }
+
+    for path in sorted(workflows.glob("*.y*ml")):
+        relative = path.relative_to(root).as_posix()
         for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            match = USES_RE.search(line)
+            match = USES_RE.match(line)
             if not match:
                 continue
+
             value = match.group(1)
             checked += 1
-            if value.startswith("./") or value.startswith("docker://"):
+            if value.startswith("./"):
                 continue
-            if not PINNED_RE.fullmatch(value):
+
+            if value.startswith("docker://"):
+                if not DOCKER_DIGEST_RE.fullmatch(value):
+                    violations.append(
+                        {
+                            "file": relative,
+                            "line": str(line_number),
+                            "uses": value,
+                            "reason": "DOCKER_NOT_DIGEST_PINNED",
+                        }
+                    )
+                continue
+
+            action_match = ACTION_REF_RE.fullmatch(value)
+            if not action_match:
                 violations.append(
                     {
-                        "file": path.relative_to(ROOT).as_posix(),
+                        "file": relative,
                         "line": str(line_number),
                         "uses": value,
+                        "reason": "ACTION_NOT_SHA_PINNED",
                     }
                 )
+                continue
+
+            action, sha = action_match.groups()
+            expected = locked_actions.get(action)
+            if expected is None:
+                violations.append(
+                    {
+                        "file": relative,
+                        "line": str(line_number),
+                        "uses": value,
+                        "reason": "ACTION_NOT_LOCKED",
+                    }
+                )
+            elif sha.lower() != expected:
+                violations.append(
+                    {
+                        "file": relative,
+                        "line": str(line_number),
+                        "uses": value,
+                        "reason": "ACTION_LOCK_MISMATCH",
+                    }
+                )
+
     return {
-        "schema": "omniexec.action-pins.v1",
+        "schema": "omniexec.action-pins.v2",
         "status": "PASS" if not violations else "FAIL",
         "checked": checked,
         "violations": violations,
