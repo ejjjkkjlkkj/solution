@@ -1,0 +1,225 @@
+name: Physical AMD HIL
+
+on:
+  push:
+    branches:
+      - main
+      - "dev/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-uefi-artifact:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential nasm uuid-dev mtools dosfstools qemu-utils ovmf
+      - name: Checkout EDK II 202608
+        run: git clone --depth 1 --branch edk2-stable202608 --recurse-submodules https://github.com/tianocore/edk2.git
+      - name: Build OmniProbe
+        run: |
+          cd edk2
+          python3 -m pip install --upgrade -r pip-requirements.txt
+          make -C BaseTools
+          export WORKSPACE="$PWD"
+          export PACKAGES_PATH="$PWD:$GITHUB_WORKSPACE/firmware"
+          source edksetup.sh BaseTools
+          build -a X64 -t GCC -b RELEASE -p "$GITHUB_WORKSPACE/firmware/OmniPkg/OmniPkg.dsc"
+          EFI_BIN="$(find Build/OmniPkg -iname OmniProbe.efi | head -1)"
+          test -n "$EFI_BIN"
+          cp "$EFI_BIN" "$GITHUB_WORKSPACE/OmniProbe.efi"
+      - name: Build removable UEFI disk for QEMU and VMware
+        run: |
+          truncate -s 64M omni-fat.img
+          mkfs.vfat -n OMNI omni-fat.img
+          mmd -i omni-fat.img ::/EFI
+          mmd -i omni-fat.img ::/EFI/BOOT
+          mcopy -i omni-fat.img OmniProbe.efi ::/EFI/BOOT/BOOTX64.EFI
+          qemu-img convert -f raw -O vmdk -o subformat=monolithicSparse omni-fat.img omni-boot.vmdk
+          cp /usr/share/OVMF/OVMF_CODE.fd .
+          cp /usr/share/OVMF/OVMF_VARS.fd .
+          sha256sum OmniProbe.efi omni-fat.img omni-boot.vmdk OVMF_CODE.fd OVMF_VARS.fd > SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: omni-uefi-hil
+          path: |
+            OmniProbe.efi
+            omni-fat.img
+            omni-boot.vmdk
+            OVMF_CODE.fd
+            OVMF_VARS.fd
+            SHA256SUMS.txt
+
+  physical-amd:
+    needs: build-uefi-artifact
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: omni-uefi-hil
+          path: hil
+      - name: Assert intended physical platform and capture immutable inventory
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $cs = Get-CimInstance Win32_ComputerSystem
+          $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
+          $bios = Get-CimInstance Win32_BIOS
+          $board = Get-CimInstance Win32_BaseBoard
+          if ($cs.Manufacturer -notmatch 'ASUSTeK') { throw "Unexpected manufacturer: $($cs.Manufacturer)" }
+          if ($cs.Model -notmatch 'M1603QA|VivoBook') { throw "Unexpected model: $($cs.Model)" }
+          if ($cpu.Name -notmatch 'Ryzen 7 5800H') { throw "Unexpected CPU: $($cpu.Name)" }
+
+          $secureBoot = $null
+          try { $secureBoot = Confirm-SecureBootUEFI -ErrorAction Stop } catch {}
+          $tpm = $null
+          try { $tpm = Get-Tpm } catch {}
+          $dg = $null
+          try { $dg = Get-CimInstance -Namespace root\Microsoft\Windows\DeviceGuard -ClassName Win32_DeviceGuard } catch {}
+
+          $sound = @(Get-CimInstance Win32_SoundDevice | Select-Object Name,Manufacturer,Status,PNPDeviceID)
+          $hda = @(Get-CimInstance Win32_PnPEntity |
+            Where-Object { $_.PNPDeviceID -match '^HDAUDIO\\|High Definition Audio' } |
+            Select-Object Name,Manufacturer,Status,PNPDeviceID)
+          $drivers = @(Get-CimInstance Win32_PnPSignedDriver |
+            Where-Object { $_.DeviceID -match '^HDAUDIO\\|VEN_1002|VEN_1022' } |
+            Select-Object DeviceName,DeviceID,DriverVersion,DriverProviderName,DriverDate,Signer)
+
+          [pscustomobject]@{
+            TimestampUtc = [DateTime]::UtcNow.ToString('o')
+            ComputerSystem = $cs | Select-Object Manufacturer,Model,SystemType,TotalPhysicalMemory
+            Processor = $cpu | Select-Object Name,NumberOfCores,NumberOfLogicalProcessors
+            BIOS = $bios | Select-Object Manufacturer,SMBIOSBIOSVersion,Version,ReleaseDate
+            BaseBoard = $board | Select-Object Manufacturer,Product,Version
+            SecureBoot = $secureBoot
+            TPM = $tpm
+            DeviceGuard = $dg
+            SoundDevices = $sound
+            HDA = $hda
+            SignedDrivers = $drivers
+          } | ConvertTo-Json -Depth 8 | Set-Content hardware-inventory.json -Encoding utf8
+
+          Get-ChildItem hil -File | Get-FileHash -Algorithm SHA256 |
+            Select-Object Path,Hash |
+            ConvertTo-Json -Depth 4 |
+            Set-Content hil-artifact-hashes.json -Encoding utf8
+
+      - name: Execute same UEFI binary under Windows QEMU
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $qemu = (Get-Command qemu-system-x86_64.exe -ErrorAction SilentlyContinue).Source
+          if (-not $qemu) {
+            $candidate = 'C:\Program Files\qemu\qemu-system-x86_64.exe'
+            if (Test-Path $candidate) { $qemu = $candidate }
+          }
+          if (-not $qemu) { throw 'QEMU not found on physical runner' }
+
+          Copy-Item hil\OVMF_VARS.fd qemu-vars.fd -Force
+          $code = (Resolve-Path 'hil\OVMF_CODE.fd').Path
+          $vars = (Resolve-Path 'qemu-vars.fd').Path
+          $disk = (Resolve-Path 'hil\omni-fat.img').Path
+          $args = @(
+            '-machine','q35,accel=tcg',
+            '-m','256',
+            '-display','none',
+            '-serial','file:qemu-serial.log',
+            '-debugcon','file:qemu-debug.log',
+            '-global','isa-debugcon.iobase=0x402',
+            '-drive',"if=pflash,format=raw,readonly=on,file=$code",
+            '-drive',"if=pflash,format=raw,file=$vars",
+            '-drive',"file=$disk,format=raw"
+          )
+          $p = Start-Process -FilePath $qemu -ArgumentList $args -PassThru -NoNewWindow
+          if (-not $p.WaitForExit(60000)) {
+            $p.Kill()
+            throw 'QEMU timeout'
+          }
+          $logs = @()
+          if (Test-Path qemu-debug.log) { $logs += Get-Content qemu-debug.log -Raw }
+          if (Test-Path qemu-serial.log) { $logs += Get-Content qemu-serial.log -Raw }
+          if (($logs -join [Environment]::NewLine) -notmatch 'OMNI_UEFI_PASS') {
+            throw 'QEMU UEFI proof marker missing'
+          }
+
+      - name: Execute same UEFI binary under VMware Workstation
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vmrunCandidates = @(
+            'C:\Program Files (x86)\VMware\VMware Workstation\vmrun.exe',
+            'C:\Program Files\VMware\VMware Workstation\vmrun.exe'
+          )
+          $vmrun = $vmrunCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $vmrun) { throw 'vmrun.exe not found' }
+
+          New-Item -ItemType Directory -Force vmware-hil | Out-Null
+          Copy-Item hil\omni-boot.vmdk vmware-hil\omni-boot.vmdk -Force
+          $serial = (Join-Path (Resolve-Path vmware-hil).Path 'serial.log').Replace('\','/')
+          @"
+.encoding = "UTF-8"
+config.version = "8"
+virtualHW.version = "21"
+displayName = "OmniExec-UEFI-HIL"
+guestOS = "other-64"
+firmware = "efi"
+memsize = "512"
+numvcpus = "1"
+vhv.enable = "FALSE"
+ide0:0.present = "TRUE"
+ide0:0.fileName = "omni-boot.vmdk"
+serial0.present = "TRUE"
+serial0.fileType = "file"
+serial0.fileName = "$serial"
+serial0.tryNoRxLoss = "FALSE"
+sound.present = "FALSE"
+ethernet0.present = "FALSE"
+usb.present = "FALSE"
+"@ | Set-Content vmware-hil\omni.vmx -Encoding ascii
+
+          $vmx = (Resolve-Path vmware-hil\omni.vmx).Path
+          & $vmrun start $vmx nogui
+          $deadline = (Get-Date).AddSeconds(90)
+          $passed = $false
+          do {
+            Start-Sleep -Milliseconds 500
+            if (Test-Path vmware-hil\serial.log) {
+              $serialText = Get-Content vmware-hil\serial.log -Raw -ErrorAction SilentlyContinue
+              if ($serialText -match 'OMNI_UEFI_PASS') { $passed = $true; break }
+            }
+          } while ((Get-Date) -lt $deadline)
+
+          & $vmrun stop $vmx hard 2>$null
+          if (-not $passed) { throw 'VMware UEFI serial proof marker missing' }
+
+      - name: Hash physical-run evidence
+        if: always()
+        run: |
+          Get-ChildItem -File -Recurse |
+            Where-Object { $_.Name -match 'hardware-inventory|hil-artifact-hashes|qemu-.*\.log|serial\.log' } |
+            ForEach-Object {
+              [pscustomobject]@{
+                Path = $_.FullName
+                Bytes = $_.Length
+                SHA256 = (Get-FileHash -Algorithm SHA256 $_.FullName).Hash
+              }
+            } | ConvertTo-Json -Depth 4 | Set-Content physical-evidence-manifest.json -Encoding utf8
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: physical-amd-hil-evidence
+          path: |
+            hardware-inventory.json
+            hil-artifact-hashes.json
+            qemu-debug.log
+            qemu-serial.log
+            vmware-hil/serial.log
+            physical-evidence-manifest.json
