@@ -48,7 +48,7 @@ jobs:
           SCT_PACKAGE="$GITHUB_WORKSPACE/Build/UefiSct/RELEASE_GCC5/SctPackageX64"
           test -d "$SCT_PACKAGE/X64"
           test -f "$SCT_PACKAGE/SctStartup.nsh"
-          test -f "$SCT_PACKAGE/X64/Sct.efi"
+          test -f "$SCT_PACKAGE/X64/SCT.efi"
 
       - name: Build pinned OVMF and UEFI Shell
         run: |
