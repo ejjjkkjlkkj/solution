@@ -34,7 +34,7 @@ class CoreTests(unittest.TestCase):
         m.apply({"sequence": 2, "kind": "future_event", "node_id": 9})
         self.assertEqual(
             [v["code"] for v in m.violations],
-            ["UPDATE_UNKNOWN_NODE", "UNKNOWN_EVENT_KIND"],
+            ["VALUE_UNKNOWN_NODE", "UNKNOWN_EVENT_KIND"],
         )
 
     def test_flight_detects_tamper(self):
