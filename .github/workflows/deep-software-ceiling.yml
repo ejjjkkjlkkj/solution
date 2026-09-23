@@ -177,11 +177,12 @@ jobs:
       - name: Execute OmniProbe in OVMF/QEMU
         run: |
           set +e
-          timeout 30s qemu-system-x86_64             -machine q35,accel=tcg -m 256             -display none -serial none -net none             -debugcon file:omni-debug.log             -global isa-debugcon.iobase=0x402             -drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.fd             -drive if=pflash,format=raw,file=OVMF_VARS.fd             -drive file=omni-fat.img,format=raw
+          timeout 30s qemu-system-x86_64             -machine q35,accel=tcg -m 256             -uuid 12345678-1234-5678-9abc-def012345678             -display none -serial none -net none             -debugcon file:omni-debug.log             -global isa-debugcon.iobase=0x402             -drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.fd             -drive if=pflash,format=raw,file=OVMF_VARS.fd             -drive file=omni-fat.img,format=raw
           rc=$?
           set -e
           cat omni-debug.log
           grep -a 'OMNI_CHALLENGE_PASS' omni-debug.log
+          grep -a 'OMNI_PLATFORM_UUID=12345678-1234-5678-9abc-def012345678' omni-debug.log
           grep -a 'OMNI_HII_PASS' omni-debug.log
           grep -a 'OMNI_EVIDENCE_PASS' omni-debug.log
           grep -a 'OMNI_UEFI_PASS' omni-debug.log
@@ -200,6 +201,7 @@ jobs:
           set +e
           timeout 30s qemu-system-x86_64 \
             -machine q35,accel=tcg -m 256 \
+            -uuid 12345678-1234-5678-9abc-def012345678 \
             -display none -serial none -net none \
             -debugcon file:record-debug.log \
             -global isa-debugcon.iobase=0x402 \
@@ -213,6 +215,7 @@ jobs:
           set -e
           test -s omni.rr
           grep -a 'OMNI_CHALLENGE_PASS' record-debug.log
+          grep -a 'OMNI_PLATFORM_UUID=12345678-1234-5678-9abc-def012345678' record-debug.log
           grep -a 'OMNI_HII_PASS' record-debug.log
           grep -a 'OMNI_EVIDENCE_PASS' record-debug.log
           grep -a 'OMNI_UEFI_PASS' record-debug.log
@@ -221,6 +224,7 @@ jobs:
           set +e
           timeout 30s qemu-system-x86_64 \
             -machine q35,accel=tcg -m 256 \
+            -uuid 12345678-1234-5678-9abc-def012345678 \
             -display none -serial none -net none \
             -debugcon file:replay-debug.log \
             -global isa-debugcon.iobase=0x402 \
@@ -233,6 +237,7 @@ jobs:
           replay_rc=$?
           set -e
           grep -a 'OMNI_CHALLENGE_PASS' replay-debug.log
+          grep -a 'OMNI_PLATFORM_UUID=12345678-1234-5678-9abc-def012345678' replay-debug.log
           grep -a 'OMNI_HII_PASS' replay-debug.log
           grep -a 'OMNI_EVIDENCE_PASS' replay-debug.log
           grep -a 'OMNI_UEFI_PASS' replay-debug.log
