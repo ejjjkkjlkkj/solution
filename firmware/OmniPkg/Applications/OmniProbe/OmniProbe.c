@@ -1,10 +1,13 @@
 #include <Uefi.h>
 #include <Protocol/HiiDatabase.h>
+#include <Protocol/LoadedImage.h>
+#include <Protocol/SimpleFileSystem.h>
 #include <Uefi/UefiInternalFormRepresentation.h>
 #include <Library/IoLib.h>
 
 #define OMNI_DEBUGCON_PORT 0x402
 #define OMNI_COM1_BASE     0x3F8
+#define OMNI_EVIDENCE_FILE L"\\OMNI-EVIDENCE.TXT"
 
 typedef struct {
   UINTN Handles;
@@ -67,6 +70,168 @@ STATIC VOID WriteStat (CONST CHAR8 *Name, UINTN Value) {
   WriteChar ('=');
   WriteUint (Value);
   WriteChar ('\n');
+}
+
+STATIC EFI_STATUS FileWriteAscii (
+  EFI_FILE_PROTOCOL *File,
+  CONST CHAR8       *Text
+  )
+{
+  UINTN Size;
+
+  if ((File == NULL) || (Text == NULL)) {
+    return EFI_INVALID_PARAMETER;
+  }
+
+  Size = 0;
+  while (Text[Size] != '\0') {
+    Size++;
+  }
+  if (Size == 0) {
+    return EFI_SUCCESS;
+  }
+  return File->Write (File, &Size, (VOID *)Text);
+}
+
+STATIC EFI_STATUS FileWriteUint (
+  EFI_FILE_PROTOCOL *File,
+  UINTN             Value
+  )
+{
+  CHAR8 Digits[32];
+  CHAR8 Forward[32];
+  UINTN Count;
+  UINTN Index;
+  UINTN Size;
+
+  Count = 0;
+  if (Value == 0) {
+    Forward[0] = '0';
+    Size = 1;
+    return File->Write (File, &Size, Forward);
+  }
+
+  while ((Value != 0) && (Count < sizeof (Digits))) {
+    Digits[Count++] = (CHAR8)('0' + (Value % 10));
+    Value /= 10;
+  }
+
+  for (Index = 0; Index < Count; ++Index) {
+    Forward[Index] = Digits[Count - Index - 1];
+  }
+
+  Size = Count;
+  return File->Write (File, &Size, Forward);
+}
+
+STATIC EFI_STATUS FileWriteStat (
+  EFI_FILE_PROTOCOL *File,
+  CONST CHAR8       *Name,
+  UINTN             Value
+  )
+{
+  EFI_STATUS Status;
+
+  Status = FileWriteAscii (File, Name);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+  Status = FileWriteAscii (File, "=");
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+  Status = FileWriteUint (File, Value);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+  return FileWriteAscii (File, "\n");
+}
+
+STATIC EFI_STATUS SaveEvidence (
+  EFI_HANDLE          ImageHandle,
+  EFI_SYSTEM_TABLE    *SystemTable,
+  CONST OMNI_HII_STATS *Stats,
+  BOOLEAN             Passed
+  )
+{
+  EFI_STATUS Status;
+  EFI_LOADED_IMAGE_PROTOCOL *LoadedImage;
+  EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *FileSystem;
+  EFI_FILE_PROTOCOL *Root;
+  EFI_FILE_PROTOCOL *File;
+
+  if ((SystemTable == NULL) || (SystemTable->BootServices == NULL) || (Stats == NULL)) {
+    return EFI_INVALID_PARAMETER;
+  }
+
+  LoadedImage = NULL;
+  Status = SystemTable->BootServices->HandleProtocol (
+                                      ImageHandle,
+                                      &gEfiLoadedImageProtocolGuid,
+                                      (VOID **)&LoadedImage
+                                      );
+  if (EFI_ERROR (Status) || (LoadedImage == NULL)) {
+    return EFI_NOT_FOUND;
+  }
+
+  FileSystem = NULL;
+  Status = SystemTable->BootServices->HandleProtocol (
+                                      LoadedImage->DeviceHandle,
+                                      &gEfiSimpleFileSystemProtocolGuid,
+                                      (VOID **)&FileSystem
+                                      );
+  if (EFI_ERROR (Status) || (FileSystem == NULL)) {
+    return EFI_NOT_FOUND;
+  }
+
+  Root = NULL;
+  Status = FileSystem->OpenVolume (FileSystem, &Root);
+  if (EFI_ERROR (Status) || (Root == NULL)) {
+    return Status;
+  }
+
+  File = NULL;
+  Status = Root->Open (
+                   Root,
+                   &File,
+                   OMNI_EVIDENCE_FILE,
+                   EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE,
+                   0
+                   );
+  if (!EFI_ERROR (Status) && (File != NULL)) {
+    File->Delete (File);
+    File = NULL;
+  }
+
+  Status = Root->Open (
+                   Root,
+                   &File,
+                   OMNI_EVIDENCE_FILE,
+                   EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE,
+                   0
+                   );
+  if (EFI_ERROR (Status) || (File == NULL)) {
+    Root->Close (Root);
+    return Status;
+  }
+
+  Status = FileWriteAscii (File, "OMNI_EVIDENCE_V1\n");
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HII_HANDLES", Stats->Handles);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HII_FORM_PACKAGES", Stats->FormPackages);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HII_OPCODES", Stats->Opcodes);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HII_QUESTIONS", Stats->Questions);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HII_PASSWORDS", Stats->Passwords);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HII_INVALID", Stats->InvalidPackages);
+  if (!EFI_ERROR (Status)) {
+    Status = FileWriteAscii (File, Passed ? "OMNI_HII_PASS\nOMNI_UEFI_PASS\n" : "OMNI_HII_FAIL\nOMNI_UEFI_FAIL\n");
+  }
+  if (!EFI_ERROR (Status)) {
+    Status = File->Flush (File);
+  }
+
+  File->Close (File);
+  Root->Close (Root);
+  return Status;
 }
 
 STATIC BOOLEAN IsQuestionOpcode (UINT8 OpCode) {
@@ -308,11 +473,12 @@ UefiMain (
   )
 {
   EFI_STATUS HiiStatus;
+  EFI_STATUS EvidenceStatus;
+  BOOLEAN Passed;
   OMNI_HII_STATS Stats = {0};
 
-  (VOID)ImageHandle;
   SerialInit ();
-  WriteText ("OMNI_UEFI_PASS\n");
+  WriteText ("OMNI_BOOT_OK\n");
 
   HiiStatus = ProbeHii (SystemTable, &Stats);
   WriteStat ("OMNI_HII_HANDLES", Stats.Handles);
@@ -322,22 +488,36 @@ UefiMain (
   WriteStat ("OMNI_HII_PASSWORDS", Stats.Passwords);
   WriteStat ("OMNI_HII_INVALID", Stats.InvalidPackages);
 
-  if (!EFI_ERROR (HiiStatus) &&
-      (Stats.FormPackages != 0) &&
-      (Stats.InvalidPackages == 0)) {
+  Passed = (BOOLEAN)(
+    !EFI_ERROR (HiiStatus) &&
+    (Stats.FormPackages != 0) &&
+    (Stats.InvalidPackages == 0)
+    );
+
+  if (Passed) {
     WriteText ("OMNI_HII_PASS\n");
   } else {
     WriteText ("OMNI_HII_FAIL\n");
   }
 
+  EvidenceStatus = SaveEvidence (ImageHandle, SystemTable, &Stats, Passed);
+  if (EFI_ERROR (EvidenceStatus)) {
+    WriteText ("OMNI_EVIDENCE_FAIL\n");
+    Passed = FALSE;
+  } else {
+    WriteText ("OMNI_EVIDENCE_PASS\n");
+  }
+
+  WriteText (Passed ? "OMNI_UEFI_PASS\n" : "OMNI_UEFI_FAIL\n");
+
   if ((SystemTable != NULL) && (SystemTable->RuntimeServices != NULL)) {
     SystemTable->RuntimeServices->ResetSystem (
       EfiResetShutdown,
-      EFI_SUCCESS,
+      Passed ? EFI_SUCCESS : EFI_DEVICE_ERROR,
       0,
       NULL
       );
   }
 
-  return EFI_SUCCESS;
+  return Passed ? EFI_SUCCESS : EFI_DEVICE_ERROR;
 }
