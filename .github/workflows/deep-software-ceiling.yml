@@ -201,7 +201,7 @@ jobs:
             -debugcon file:record-debug.log \
             -global isa-debugcon.iobase=0x402 \
             -icount shift=auto,rr=record,rrfile=omni.rr \
-            -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE.fd \
+            -drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.fd \
             -drive if=pflash,format=raw,file=OVMF_RR_RECORD.fd \
             -drive file=omni-rr-base.img,format=raw,if=none,snapshot=on,id=img-direct \
             -drive driver=blkreplay,if=none,image=img-direct,id=img-blkreplay \
@@ -222,7 +222,7 @@ jobs:
             -debugcon file:replay-debug.log \
             -global isa-debugcon.iobase=0x402 \
             -icount shift=auto,rr=replay,rrfile=omni.rr \
-            -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE.fd \
+            -drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.fd \
             -drive if=pflash,format=raw,file=OVMF_RR_REPLAY.fd \
             -drive file=omni-rr-base.img,format=raw,if=none,snapshot=on,id=img-direct \
             -drive driver=blkreplay,if=none,image=img-direct,id=img-blkreplay \
