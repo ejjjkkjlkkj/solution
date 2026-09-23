@@ -1,10 +1,11 @@
 name: Physical AMD HIL
 
 on:
+  # Privileged SYSTEM execution on the self-hosted runner is automatic only
+  # for the trusted integration branch. Other refs require explicit dispatch.
   push:
     branches:
       - main
-      - "dev/**"
   workflow_dispatch:
 
 concurrency:

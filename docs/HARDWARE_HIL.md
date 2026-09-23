@@ -2,6 +2,12 @@
 
 This workflow deliberately does not modify ASUS OEM firmware.
 
+## Privileged trigger policy
+
+Automatic hardware-in-the-loop execution is restricted to pushes on `main`. The Windows self-hosted stage runs selected validation under `NT AUTHORITY\\SYSTEM`, so development-branch pushes must not launch it implicitly. Testing another ref requires an explicit `workflow_dispatch` by an authorized operator.
+
+Physical HIL remains separate from `SOFTWARE_CEILING_PASS`; a missing non-main HIL run cannot be reclassified as software evidence.
+
 A hosted Linux runner builds one immutable OmniProbe.efi and three media forms:
 
 - omni-fat.img for virtual boot
