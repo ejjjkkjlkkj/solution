@@ -7,10 +7,22 @@ import pathlib
 import re
 from dataclasses import dataclass
 
-USES_RE = re.compile(r"^\s*-?\s*uses:\s*([^\s#]+)", re.IGNORECASE)
-FLOW_USES_RE = re.compile(r"(?:^|[,{[])\s*-?\s*uses\s*:", re.IGNORECASE)
+USES_KEY_RE = r'(?:"uses"|\'uses\'|uses)'
+CONTINUE_KEY_RE = r'(?:"continue-on-error"|\'continue-on-error\'|continue-on-error)'
+USES_RE = re.compile(
+    r"^\\s*-?\\s*" + USES_KEY_RE + r"\\s*:\\s*([^\\s#]+)",
+    re.IGNORECASE,
+)
+FLOW_USES_RE = re.compile(
+    r"(?:^|[,{[])\\s*-?\\s*" + USES_KEY_RE + r"\\s*:",
+    re.IGNORECASE,
+)
 CONTINUE_RE = re.compile(
-    r"(?:^|[{,])\s*-?\s*continue-on-error\s*:\s*true(?:\s*[,}]|\s*$)",
+    r"(?:^|[{,])\\s*-?\\s*" + CONTINUE_KEY_RE + r"\\s*:\\s*true(?:\\s*[,}]|\\s*$)",
+    re.IGNORECASE,
+)
+EXPLICIT_POLICY_KEY_RE = re.compile(
+    r"^\\s*\\?\\s*(?:" + USES_KEY_RE + "|" + CONTINUE_KEY_RE + r")\\s*$",
     re.IGNORECASE,
 )
 COMMIT_REF_RE = re.compile(r"^[0-9a-fA-F]{40}$")
@@ -54,6 +66,17 @@ def inspect_file(path: pathlib.Path) -> list[Violation]:
     for index, raw in enumerate(lines):
         number = index + 1
         active = _strip_unquoted_comment(raw)
+
+        if EXPLICIT_POLICY_KEY_RE.match(active):
+            violations.append(
+                Violation(
+                    str(path),
+                    number,
+                    "POLICY_KEY_SYNTAX_UNSUPPORTED",
+                    active.strip(),
+                )
+            )
+            continue
 
         if CONTINUE_RE.search(active):
             violations.append(
@@ -128,7 +151,7 @@ def main() -> int:
         return 2
 
     result = {
-        "schema": "omni.workflow-policy.v2",
+        "schema": "omni.workflow-policy.v3",
         "status": "PASS" if not violations else "FAIL",
         "violations": [v.__dict__ for v in violations],
     }

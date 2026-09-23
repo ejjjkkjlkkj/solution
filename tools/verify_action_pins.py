@@ -6,8 +6,19 @@ import pathlib
 import re
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-USES_RE = re.compile(r"^\s*(?:-\s*)?uses:\s*([^\s#]+)\s*(?:#.*)?$")
-FLOW_USES_RE = re.compile(r"(?:^|[,{[])\s*-?\s*uses\s*:", re.IGNORECASE)
+USES_KEY_RE = r'(?:"uses"|\'uses\'|uses)'
+USES_RE = re.compile(
+    r"^\\s*(?:-\\s*)?" + USES_KEY_RE + r"\\s*:\\s*([^\\s#]+)\\s*(?:#.*)?$",
+    re.IGNORECASE,
+)
+FLOW_USES_RE = re.compile(
+    r"(?:^|[,{[])\\s*-?\\s*" + USES_KEY_RE + r"\\s*:",
+    re.IGNORECASE,
+)
+EXPLICIT_USES_KEY_RE = re.compile(
+    r"^\\s*\\?\\s*" + USES_KEY_RE + r"\\s*$",
+    re.IGNORECASE,
+)
 ACTION_REF_RE = re.compile(
     r"^([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*)@([0-9a-fA-F]{40})$"
 )
@@ -74,7 +85,7 @@ def verify(root: pathlib.Path = ROOT) -> dict[str, object]:
         locked_actions = _locked_actions(root)
     except ValueError as exc:
         return {
-            "schema": "omniexec.action-pins.v3",
+            "schema": "omniexec.action-pins.v4",
             "status": "FAIL",
             "checked": 0,
             "violations": [
@@ -91,6 +102,18 @@ def verify(root: pathlib.Path = ROOT) -> dict[str, object]:
         relative = path.relative_to(root).as_posix()
         for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             active = _strip_unquoted_comment(line)
+            if EXPLICIT_USES_KEY_RE.match(active):
+                checked += 1
+                violations.append(
+                    {
+                        "file": relative,
+                        "line": str(line_number),
+                        "uses": active.strip(),
+                        "reason": "USES_SYNTAX_UNSUPPORTED",
+                    }
+                )
+                continue
+
             match = USES_RE.match(active)
             if not match:
                 if FLOW_USES_RE.search(active):
@@ -156,7 +179,7 @@ def verify(root: pathlib.Path = ROOT) -> dict[str, object]:
                 )
 
     return {
-        "schema": "omniexec.action-pins.v3",
+        "schema": "omniexec.action-pins.v4",
         "status": "PASS" if not violations else "FAIL",
         "checked": checked,
         "violations": violations,

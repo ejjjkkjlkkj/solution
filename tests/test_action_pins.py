@@ -65,6 +65,22 @@ class ActionPinTests(unittest.TestCase):
             result,
         )
 
+    def test_quoted_uses_key_cannot_bypass_pin_verifier(self):
+        result = self._verify_fixture(
+            'steps:\\n  - "uses": actions/checkout@v4\\n',
+            {"checkout": "a" * 40},
+        )
+        self.assertEqual(result["status"], "FAIL")
+        self.assertEqual(result["violations"][0]["reason"], "ACTION_NOT_SHA_PINNED")
+
+    def test_explicit_uses_key_is_rejected_fail_closed(self):
+        result = self._verify_fixture(
+            "? uses\\n: actions/checkout@v4\\n",
+            {"checkout": "a" * 40},
+        )
+        self.assertEqual(result["status"], "FAIL")
+        self.assertEqual(result["violations"][0]["reason"], "USES_SYNTAX_UNSUPPORTED")
+
     def test_comment_uses_is_ignored(self):
         result = self._verify_fixture("# uses: actions/checkout@v4\n")
         self.assertEqual(result["status"], "PASS", result["violations"])
