@@ -64,6 +64,8 @@ jobs:
           cd edk2
           make -C BaseTools
           export WORKSPACE="$PWD"
+
+          export EDK_TOOLS_PATH="$WORKSPACE/BaseTools"
           export PYTHON_COMMAND=python3
           source edksetup.sh BaseTools
           build -a X64 -t GCC -b RELEASE -p OvmfPkg/OvmfPkgX64.dsc
@@ -79,7 +81,7 @@ jobs:
           set -euo pipefail
           cp OVMF_VARS.pinned.fd "$RUNNER_TEMP/OVMF_VARS.fd"
           set +e
-          timeout 8s "$GITHUB_WORKSPACE/qemu-system-x86_64"             -machine q35,smm=on,accel=tcg             -m 512 -nodefaults -display none -serial none -monitor none             -drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.pinned.fd             -drive if=pflash,format=raw,file="$RUNNER_TEMP/OVMF_VARS.fd"
+          timeout 8s "$GITHUB_WORKSPACE/qemu-system-x86_64" -L "$GITHUB_WORKSPACE/qemu-system-x86_64.data"             -machine q35,smm=on,accel=tcg             -m 512 -nodefaults -display none -serial none -monitor none             -drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.pinned.fd             -drive if=pflash,format=raw,file="$RUNNER_TEMP/OVMF_VARS.fd"
           rc=$?
           set -e
           if [ "$rc" -ne 124 ] && [ "$rc" -ne 0 ]; then

@@ -125,6 +125,8 @@ jobs:
           set -euo pipefail
           make -C BaseTools
           export WORKSPACE="$PWD"
+
+          export EDK_TOOLS_PATH="$WORKSPACE/BaseTools"
           export PYTHON_COMMAND=python3
           source edksetup.sh BaseTools
           build -a X64 -t GCC -b NOOPT -p MdePkg/Test/MdePkgHostTest.dsc
@@ -175,6 +177,8 @@ jobs:
           cd edk2
           make -C BaseTools
           export WORKSPACE="$PWD"
+
+          export EDK_TOOLS_PATH="$WORKSPACE/BaseTools"
           export PACKAGES_PATH="$PWD:$GITHUB_WORKSPACE/firmware"
           export PYTHON_COMMAND=python3
           source edksetup.sh BaseTools
@@ -203,7 +207,7 @@ jobs:
       - name: Execute OmniProbe in OVMF/QEMU
         run: |
           set +e
-          timeout 30s "$GITHUB_WORKSPACE/qemu-system-x86_64"             -machine q35,accel=tcg -m 256             -display none -serial none -net none             -debugcon file:omni-debug.log             -global isa-debugcon.iobase=0x402             -drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.pinned.fd             -drive if=pflash,format=raw,file=OVMF_VARS.fd             -drive file=omni-fat.img,format=raw
+          timeout 30s "$GITHUB_WORKSPACE/qemu-system-x86_64" -L "$GITHUB_WORKSPACE/qemu-system-x86_64.data"             -machine q35,accel=tcg -m 256             -display none -serial none -net none             -debugcon file:omni-debug.log             -global isa-debugcon.iobase=0x402             -drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.pinned.fd             -drive if=pflash,format=raw,file=OVMF_VARS.fd             -drive file=omni-fat.img,format=raw
           rc=$?
           set -e
           cat omni-debug.log
@@ -224,7 +228,7 @@ jobs:
           cp OVMF_VARS.pinned.fd OVMF_RR_REPLAY.fd
           rm -f omni.rr record-debug.log replay-debug.log
           set +e
-          timeout 30s "$GITHUB_WORKSPACE/qemu-system-x86_64" \
+          timeout 30s "$GITHUB_WORKSPACE/qemu-system-x86_64" -L "$GITHUB_WORKSPACE/qemu-system-x86_64.data" \
             -machine q35,accel=tcg -m 256 \
             -display none -serial none -net none \
             -debugcon file:record-debug.log \
@@ -245,7 +249,7 @@ jobs:
           test "$record_rc" -eq 0
 
           set +e
-          timeout 30s "$GITHUB_WORKSPACE/qemu-system-x86_64" \
+          timeout 30s "$GITHUB_WORKSPACE/qemu-system-x86_64" -L "$GITHUB_WORKSPACE/qemu-system-x86_64.data" \
             -machine q35,accel=tcg -m 256 \
             -display none -serial none -net none \
             -debugcon file:replay-debug.log \

@@ -60,6 +60,15 @@ test -x build/qemu-system-x86_64
 test -x build/qemu-img
 mkdir -p "$(dirname "$OUTPUT")"
 cp build/qemu-system-x86_64 "$OUTPUT"
+
+DATA_DIR="${OUTPUT}.data"
+rm -rf "$DATA_DIR"
+mkdir -p "$DATA_DIR"
+cp -a "$SOURCE/pc-bios/." "$DATA_DIR/"
+for rom in kvmvapic.bin vgabios-stdvga.bin; do
+  test -f "$DATA_DIR/$rom"
+done
+
 if [[ -n "$IMG_OUTPUT" ]]; then
   mkdir -p "$(dirname "$IMG_OUTPUT")"
   cp build/qemu-img "$IMG_OUTPUT"
@@ -67,5 +76,7 @@ fi
 
 "$OUTPUT" --version
 sha256sum "$OUTPUT"
+sha256sum "$DATA_DIR/kvmvapic.bin" "$DATA_DIR/vgabios-stdvga.bin"
 if [[ -n "$IMG_OUTPUT" ]]; then sha256sum "$IMG_OUTPUT"; fi
-printf 'QEMU_SOURCE_VERSION=%s\nQEMU_RELEASE_KEY_FPR=%s\n' "$QEMU_VERSION" "$QEMU_RELEASE_KEY_FPR"
+printf 'QEMU_SOURCE_VERSION=%s\nQEMU_RELEASE_KEY_FPR=%s\nQEMU_DATA_DIR=%s\n' \
+  "$QEMU_VERSION" "$QEMU_RELEASE_KEY_FPR" "$DATA_DIR"

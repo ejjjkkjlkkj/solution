@@ -58,6 +58,8 @@ jobs:
         run: |
           make -C edk2/BaseTools
           export WORKSPACE="$GITHUB_WORKSPACE/edk2"
+
+          export EDK_TOOLS_PATH="$WORKSPACE/BaseTools"
           export PACKAGES_PATH="$WORKSPACE:$GITHUB_WORKSPACE/SctPkg"
           cd edk2
           export PYTHON_COMMAND=python3
@@ -104,7 +106,7 @@ jobs:
         run: |
           cp OVMF_VARS.fd OVMF_SCT_VARS.fd
           set +e
-          timeout --signal=TERM 55m "$GITHUB_WORKSPACE/qemu-system-x86_64"             -machine q35,accel=tcg             -m 2048             -display none             -monitor none             -serial file:sct-serial.log             -net none             -drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.fd             -drive if=pflash,format=raw,file=OVMF_SCT_VARS.fd             -drive file=sct-runtime.img,format=raw
+          timeout --signal=TERM 55m "$GITHUB_WORKSPACE/qemu-system-x86_64" -L "$GITHUB_WORKSPACE/qemu-system-x86_64.data"             -machine q35,accel=tcg             -m 2048             -display none             -monitor none             -serial file:sct-serial.log             -net none             -drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.fd             -drive if=pflash,format=raw,file=OVMF_SCT_VARS.fd             -drive file=sct-runtime.img,format=raw
           QEMU_RC=$?
           set -e
           echo "QEMU_RC=$QEMU_RC"
