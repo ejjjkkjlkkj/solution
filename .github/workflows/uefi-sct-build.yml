@@ -1,0 +1,54 @@
+name: UEFI SCT Build
+
+on:
+  push:
+    branches:
+      - main
+      - "dev/**"
+  workflow_dispatch:
+
+concurrency:
+  group: sct-build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-sct:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Install build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential nasm uuid-dev python3-pip
+      - name: Checkout matching EDK II
+        run: |
+          git clone --depth 1 --branch edk2-stable202508 --recurse-submodules https://github.com/tianocore/edk2.git
+          test "$(git -C edk2 rev-parse HEAD)" = "d46aa46c8361194521391aa581593e556c707c6e"
+      - name: Checkout official edk2-test SCT
+        run: |
+          git clone --depth 1 --branch edk2-test-stable202509 https://github.com/tianocore/edk2-test.git
+          test "$(git -C edk2-test rev-parse HEAD)" = "2b2a16ac239cd89d778cb79ae6e42c533fc4c25a"
+      - name: Assemble SCT workspace
+        run: |
+          cp -a edk2-test/uefi-sct/SctPkg ./SctPkg
+
+      - name: Build official UEFI SCT X64
+        run: |
+          chmod +x SctPkg/build.sh
+          ./SctPkg/build.sh X64 GCC RELEASE
+          test -d Build/UefiSct/RELEASE_GCC5/SctPackageX64
+          find Build/UefiSct/RELEASE_GCC5/SctPackageX64 -type f | head -50
+      - name: Hash SCT package
+        run: |
+          find Build/UefiSct/RELEASE_GCC5/SctPackageX64 -type f -print0 |
+            sort -z |
+            xargs -0 sha256sum > sct-sha256.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: uefi-sct-x64
+          path: |
+            Build/UefiSct/RELEASE_GCC5/SctPackageX64
+            sct-sha256.txt

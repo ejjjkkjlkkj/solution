@@ -1,0 +1,269 @@
+name: Deep Software Ceiling
+
+on:
+  push:
+    branches:
+      - main
+      - "dev/**"
+  workflow_dispatch:
+
+concurrency:
+  group: deep-software-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  coverage:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13"
+      - name: Install LLVM coverage tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm
+          llvm-profdata --version
+          llvm-cov --version
+      - name: Instrument native core
+        run: >-
+          clang -std=c11 -O0 -Wall -Wextra -Wpedantic -Werror
+          -fprofile-instr-generate -fcoverage-mapping
+          -Iinclude c/omni_protocol.c tests/c/test_protocol.c -o protocol_cov
+      - run: LLVM_PROFILE_FILE=protocol.profraw ./protocol_cov
+      - run: llvm-profdata merge -sparse protocol.profraw -o protocol.profdata
+      - run: llvm-cov export ./protocol_cov -instr-profile=protocol.profdata c/omni_protocol.c > coverage.json
+      - run: python tools/coverage_gate.py coverage.json c/omni_protocol.c
+
+  fuzz-100k:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Build libFuzzer + ASan + UBSan
+        run: >-
+          clang -std=c11 -Wall -Wextra -Wpedantic -Werror
+          -fsanitize=fuzzer,address,undefined
+          -Iinclude c/omni_protocol.c fuzz/mm_fuzz.c -o mm_fuzz
+      - run: ./mm_fuzz -runs=100000 -max_len=8192
+
+  cbmc:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install CBMC 6.11.0
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download cbmc-6.11.0 --repo diffblue/cbmc --pattern 'ubuntu-24.04-cbmc-6.11.0-Linux.deb'
+          echo "b3721aa541038384d7801ea3aeabbcddc3e8845ac8f1cbff637cf8dec7481ac8  ubuntu-24.04-cbmc-6.11.0-Linux.deb" | sha256sum -c -
+          sudo apt-get update
+          sudo apt-get install -y ./ubuntu-24.04-cbmc-6.11.0-Linux.deb
+          cbmc --version
+      - name: Prove protocol invariants
+        run: >-
+          cbmc formal/cbmc_protocol.c c/omni_protocol.c
+          -I include
+          --bounds-check --pointer-check
+          --signed-overflow-check --unsigned-overflow-check
+          --div-by-zero-check --pointer-overflow-check
+
+  framac:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install Frama-C 33 through opam
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y opam libgmp-dev graphviz patch graphviz
+          opam init --disable-sandboxing -y
+          opam switch create 5.3.0 -y
+          eval "$(opam env)"
+          opam install -y frama-c.33.0
+          frama-c -version
+      - name: Eva value analysis
+        run: |
+          eval "$(opam env)"
+          frama-c -eva -eva-precision 3 -cpp-extra-args="-Iinclude" c/omni_protocol.c
+      - name: WP/RTE proof obligations
+        run: |
+          eval "$(opam env)"
+          frama-c -wp -wp-rte -cpp-extra-args="-Iinclude" c/omni_protocol.c 2>&1 | tee wp.log
+          python - <<'PY'
+          import re
+          text=open("wp.log", encoding="utf-8").read()
+          goals=re.findall(r"Proved goals:\s*(\d+)\s*/\s*(\d+)", text)
+          if not goals:
+              raise SystemExit("No Frama-C WP proof summary found")
+          proved,total=map(int,goals[-1])
+          if proved != total:
+              raise SystemExit(f"Frama-C WP incomplete: {proved}/{total}")
+          print(f"Frama-C WP: {proved}/{total} proved")
+          PY
+
+  edk2-host-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Checkout EDK II stable 202608
+        run: |
+          git clone --depth 1 --branch edk2-stable202608 --recurse-submodules https://github.com/tianocore/edk2.git
+          test "$(git -C edk2 rev-parse HEAD)" = "2970e5699ba6267f3384ffab20f96647578aebc8"
+      - name: Install prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential gcc-multilib g++-multilib lcov nasm uuid-dev mono-complete ca-certificates-mono
+          python3 -m pip install --upgrade -r edk2/pip-requirements.txt
+      - name: Run official MdePkg host tests with ASan enabled
+        working-directory: edk2
+        env:
+          ASAN_OPTIONS: detect_leaks=0
+        run: |
+          stuart_setup -c ./.pytool/CISettings.py TOOL_CHAIN_TAG=GCC
+          stuart_update -c ./.pytool/CISettings.py TOOL_CHAIN_TAG=GCC
+          stuart_ci_build -c ./.pytool/CISettings.py TOOL_CHAIN_TAG=GCC -t NOOPT -p MdePkg
+
+  uefi-qemu:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install QEMU/OVMF and EDK II prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential nasm uuid-dev qemu-system-x86 ovmf mtools dosfstools
+      - name: Checkout EDK II stable 202608
+        run: |
+          git clone --depth 1 --branch edk2-stable202608 --recurse-submodules https://github.com/tianocore/edk2.git
+          test "$(git -C edk2 rev-parse HEAD)" = "2970e5699ba6267f3384ffab20f96647578aebc8"
+      - name: Build OmniProbe.efi with real EDK II
+        run: |
+          cd edk2
+
+          make -C BaseTools
+          export WORKSPACE="$PWD"
+          export PACKAGES_PATH="$PWD:$GITHUB_WORKSPACE/firmware"
+          source edksetup.sh BaseTools
+          build -a X64 -t GCC -b RELEASE -p "$GITHUB_WORKSPACE/firmware/OmniPkg/OmniPkg.dsc"
+          find Build/OmniPkg -iname OmniProbe.efi -print
+      - name: Build bootable FAT image
+        run: |
+          EFI_BIN="$(find edk2/Build/OmniPkg -iname OmniProbe.efi | head -1)"
+          test -n "$EFI_BIN"
+          truncate -s 64M omni-fat.img
+          mkfs.vfat omni-fat.img
+          mmd -i omni-fat.img ::/EFI
+          mmd -i omni-fat.img ::/EFI/BOOT
+          mcopy -i omni-fat.img "$EFI_BIN" ::/EFI/BOOT/BOOTX64.EFI
+          printf '%s' "$GITHUB_SHA" | sha256sum | awk '{print $1}' > omni-challenge.txt
+          mcopy -i omni-fat.img omni-challenge.txt ::/OMNI-CHALLENGE.TXT
+          cp omni-fat.img omni-rr-base.img
+          if [[ -f /usr/share/OVMF/OVMF_CODE_4M.fd && -f /usr/share/OVMF/OVMF_VARS_4M.fd ]]; then
+            cp /usr/share/OVMF/OVMF_CODE_4M.fd OVMF_CODE.fd
+            cp /usr/share/OVMF/OVMF_VARS_4M.fd OVMF_VARS.fd
+          elif [[ -f /usr/share/OVMF/OVMF_CODE.fd && -f /usr/share/OVMF/OVMF_VARS.fd ]]; then
+            cp /usr/share/OVMF/OVMF_CODE.fd OVMF_CODE.fd
+            cp /usr/share/OVMF/OVMF_VARS.fd OVMF_VARS.fd
+          else
+            echo "Compatible OVMF CODE/VARS pair not found" >&2
+            exit 1
+          fi
+      - name: Execute OmniProbe in OVMF/QEMU
+        run: |
+          set +e
+          timeout 30s qemu-system-x86_64             -machine q35,accel=tcg -m 256             -display none -serial none -net none             -debugcon file:omni-debug.log             -global isa-debugcon.iobase=0x402             -drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.fd             -drive if=pflash,format=raw,file=OVMF_VARS.fd             -drive file=omni-fat.img,format=raw
+          rc=$?
+          set -e
+          cat omni-debug.log
+          grep -a 'OMNI_CHALLENGE_PASS' omni-debug.log
+          grep -a 'OMNI_HII_PASS' omni-debug.log
+          grep -a 'OMNI_EVIDENCE_PASS' omni-debug.log
+          grep -a 'OMNI_UEFI_PASS' omni-debug.log
+          test "$rc" -eq 0
+          mcopy -i omni-fat.img ::OMNI-EVIDENCE.TXT omni-evidence.txt
+          grep -a 'OMNI_EVIDENCE_V2' omni-evidence.txt
+          expected_challenge="$(cat omni-challenge.txt)"
+          grep -a "OMNI_CHALLENGE=$expected_challenge" omni-evidence.txt
+          grep -a 'OMNI_HII_PASS' omni-evidence.txt
+          grep -a 'OMNI_UEFI_PASS' omni-evidence.txt
+      - name: Deterministic QEMU record/replay
+        run: |
+          cp OVMF_VARS.fd OVMF_RR_RECORD.fd
+          cp OVMF_VARS.fd OVMF_RR_REPLAY.fd
+          rm -f omni.rr record-debug.log replay-debug.log
+          set +e
+          timeout 30s qemu-system-x86_64 \
+            -machine q35,accel=tcg -m 256 \
+            -display none -serial none -net none \
+            -debugcon file:record-debug.log \
+            -global isa-debugcon.iobase=0x402 \
+            -icount shift=auto,rr=record,rrfile=omni.rr \
+            -drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.fd \
+            -drive if=pflash,format=raw,file=OVMF_RR_RECORD.fd \
+            -drive file=omni-rr-base.img,format=raw,if=none,snapshot=on,id=img-direct \
+            -drive driver=blkreplay,if=none,image=img-direct,id=img-blkreplay \
+            -device ide-hd,drive=img-blkreplay
+          record_rc=$?
+          set -e
+          test -s omni.rr
+          grep -a 'OMNI_CHALLENGE_PASS' record-debug.log
+          grep -a 'OMNI_HII_PASS' record-debug.log
+          grep -a 'OMNI_EVIDENCE_PASS' record-debug.log
+          grep -a 'OMNI_UEFI_PASS' record-debug.log
+          test "$record_rc" -eq 0
+
+          set +e
+          timeout 30s qemu-system-x86_64 \
+            -machine q35,accel=tcg -m 256 \
+            -display none -serial none -net none \
+            -debugcon file:replay-debug.log \
+            -global isa-debugcon.iobase=0x402 \
+            -icount shift=auto,rr=replay,rrfile=omni.rr \
+            -drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.fd \
+            -drive if=pflash,format=raw,file=OVMF_RR_REPLAY.fd \
+            -drive file=omni-rr-base.img,format=raw,if=none,snapshot=on,id=img-direct \
+            -drive driver=blkreplay,if=none,image=img-direct,id=img-blkreplay \
+            -device ide-hd,drive=img-blkreplay
+          replay_rc=$?
+          set -e
+          grep -a 'OMNI_CHALLENGE_PASS' replay-debug.log
+          grep -a 'OMNI_HII_PASS' replay-debug.log
+          grep -a 'OMNI_EVIDENCE_PASS' replay-debug.log
+          grep -a 'OMNI_UEFI_PASS' replay-debug.log
+          test "$replay_rc" -eq 0
+          cmp --silent record-debug.log replay-debug.log
+
+  static-analysis:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: GCC interprocedural analyzer
+        run: >-
+          gcc -std=c11 -O2 -Wall -Wextra -Wpedantic -Werror
+          -fanalyzer -Iinclude -c c/omni_protocol.c -o /tmp/omni_protocol.o
+      - name: Clang static analyzer
+        run: >-
+          clang --analyze -std=c11
+          -Wall -Wextra -Wpedantic -Werror
+          -Iinclude c/omni_protocol.c
+
+  compiler-differential:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        cc: [gcc, clang]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Build and run under both compilers
+        run: |
+          ${{ matrix.cc }} -std=c11 -O2 -Wall -Wextra -Wpedantic -Werror -Iinclude c/omni_protocol.c tests/c/test_protocol.c -o protocol_test
+          ./protocol_test
+
+  software-deep-pass:
+    runs-on: ubuntu-24.04
+    needs: [coverage, fuzz-100k, cbmc, framac, edk2-host-tests, uefi-qemu, static-analysis, compiler-differential]
+    steps:
+      - run: echo "DEEP_SOFTWARE_GATES_PASS"

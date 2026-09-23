@@ -1,0 +1,130 @@
+name: Deep Software Gates
+
+on:
+  push:
+  workflow_dispatch:
+
+concurrency:
+  group: deep-software-gates-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  coverage:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Critical native coverage = 100%
+        run: bash scripts/coverage_gate.sh
+
+  reproducible-wheel:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13"
+      - name: Install hash-locked Python build toolchain
+        shell: bash
+        run: |
+          python -m pip install \
+            --only-binary=:all: \
+            --require-hashes \
+            -r requirements-build.lock
+      - run: python -m pip check
+      - run: python scripts/reproducible_build.py
+
+  qemu-ovmf-smoke:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install QEMU and OVMF
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 ovmf
+      - name: Boot OVMF under TCG
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f /usr/share/OVMF/OVMF_CODE_4M.fd && -f /usr/share/OVMF/OVMF_VARS_4M.fd ]]; then
+            CODE=/usr/share/OVMF/OVMF_CODE_4M.fd
+            VARS_TEMPLATE=/usr/share/OVMF/OVMF_VARS_4M.fd
+          elif [[ -f /usr/share/OVMF/OVMF_CODE.fd && -f /usr/share/OVMF/OVMF_VARS.fd ]]; then
+            CODE=/usr/share/OVMF/OVMF_CODE.fd
+            VARS_TEMPLATE=/usr/share/OVMF/OVMF_VARS.fd
+          else
+            echo "Compatible OVMF CODE/VARS pair not found" >&2
+            exit 1
+          fi
+          cp "$VARS_TEMPLATE" "$RUNNER_TEMP/OVMF_VARS.fd"
+          set +e
+          timeout 8s qemu-system-x86_64             -machine q35,smm=on,accel=tcg             -m 512 -nodefaults -display none -serial none -monitor none             -drive if=pflash,format=raw,readonly=on,file="$CODE"             -drive if=pflash,format=raw,file="$RUNNER_TEMP/OVMF_VARS.fd"
+          rc=$?
+          set -e
+          if [ "$rc" -ne 124 ] && [ "$rc" -ne 0 ]; then
+            exit "$rc"
+          fi
+          echo "QEMU/OVMF TCG launch gate PASS"
+
+  cbmc:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install pinned CBMC 6.11.0
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download cbmc-6.11.0 --repo diffblue/cbmc             --pattern 'ubuntu-24.04-cbmc-6.11.0-Linux.deb'
+          echo "b3721aa541038384d7801ea3aeabbcddc3e8845ac8f1cbff637cf8dec7481ac8  ubuntu-24.04-cbmc-6.11.0-Linux.deb" | sha256sum -c -
+          sudo apt-get update
+          sudo apt-get install -y ./ubuntu-24.04-cbmc-6.11.0-Linux.deb
+          cbmc --version
+      - name: Prove bounded protocol invariants
+        run: >-
+          cbmc formal/cbmc_protocol.c c/omni_protocol.c
+          -I include
+          --bounds-check --pointer-check
+          --signed-overflow-check --unsigned-overflow-check
+          --div-by-zero-check --pointer-overflow-check
+
+  frama-c:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install pinned Frama-C 33
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y opam libgmp-dev graphviz patch
+          opam init --disable-sandboxing -y
+          opam switch create 5.3.0 -y
+          eval "$(opam env)"
+          opam install -y frama-c.33.0
+          frama-c -version
+      - name: Eva value analysis
+        run: |
+          eval "$(opam env)"
+          frama-c -eva -eva-precision 3 -cpp-extra-args="-Iinclude" c/omni_protocol.c
+      - name: WP/RTE must prove every generated goal
+        run: |
+          eval "$(opam env)"
+          frama-c -wp -wp-rte -cpp-extra-args="-Iinclude" c/omni_protocol.c 2>&1 | tee wp.log
+          python - <<'PY'
+          import re
+          text=open("wp.log", encoding="utf-8").read()
+          goals=re.findall(r"Proved goals:\s*(\d+)\s*/\s*(\d+)", text)
+          if not goals:
+              raise SystemExit("No Frama-C WP proof summary found")
+          proved,total=map(int,goals[-1])
+          if proved != total:
+              raise SystemExit(f"Frama-C WP incomplete: {proved}/{total}")
+          print(f"Frama-C WP: {proved}/{total} proved")
+          PY
+
+  all-deep-gates:
+    runs-on: ubuntu-24.04
+    needs: [coverage, reproducible-wheel, qemu-ovmf-smoke, cbmc, frama-c]
+    steps:
+      - run: echo "DEEP_SOFTWARE_GATES_STRICT_PASS"
