@@ -107,6 +107,10 @@ jobs:
             echo "SCT runtime timed out before returning to startup.nsh" >&2
             exit 1
           fi
+          if [ "$QEMU_RC" -ne 0 ]; then
+            echo "SCT QEMU exited abnormally: $QEMU_RC" >&2
+            exit 1
+          fi
           mcopy -i sct-runtime.img ::/SCT-DONE.TXT SCT-DONE.TXT
           grep -a 'OMNI_SCT_RETURNED' SCT-DONE.TXT
 
