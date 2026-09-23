@@ -121,9 +121,21 @@ jobs:
           $psexec = 'C:\Users\adm\Downloads\PsExec64.exe'
           if (-not (Test-Path $psexec)) { throw "PsExec64 missing: $psexec" }
           $hash = (Get-FileHash -Algorithm SHA256 $psexec).Hash
+          $signature = Get-AuthenticodeSignature -FilePath $psexec
+          if ($signature.Status -ne 'Valid') { throw "PsExec Authenticode status: $($signature.Status)" }
+          if ($null -eq $signature.SignerCertificate) { throw 'PsExec signer certificate missing' }
+          if ($signature.SignerCertificate.Subject -notmatch 'Microsoft') {
+            throw "Unexpected PsExec signer: $($signature.SignerCertificate.Subject)"
+          }
+          $version = (Get-Item $psexec).VersionInfo
           [pscustomobject]@{
             Path = $psexec
             SHA256 = $hash
+            AuthenticodeStatus = [string]$signature.Status
+            SignerSubject = $signature.SignerCertificate.Subject
+            SignerThumbprint = $signature.SignerCertificate.Thumbprint
+            FileVersion = $version.FileVersion
+            ProductVersion = $version.ProductVersion
           } | ConvertTo-Json | Set-Content psexec-identity.json -Encoding utf8
 
           $binding = Get-Content hil\omni-run-binding.json -Raw | ConvertFrom-Json
