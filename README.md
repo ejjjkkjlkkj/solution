@@ -14,6 +14,6 @@ python -m unittest discover -s tests -v
 
 ## Definition of done
 
-`SOFTWARE_CEILING_PASS` is allowed only when every required software gate is `PASS`. `NOT_RUN`, `SKIP`, or missing external verification tools remain blockers. The final hardware-only gates are physical UEFI behavior, keyboard scan behavior, real HDA codec/amplifier/speaker output, physical latency/jitter, TPM quote, and OEM-specific behavior.
+`SOFTWARE_CEILING_PASS` is allowed only when every required software gate is `PASS`. `NOT_RUN`, `SKIP`, or missing external verification tools remain blockers. The final hardware-only gates are physical UEFI behavior, keyboard scan behavior, real HDA codec/amplifier/speaker output, physical latency/jitter, TPM quote, and OEM-specific behavior. Physical evidence can additionally be bound to the machine's SMBIOS Type 1 UUID so pre-OS proof is checked against the Windows hardware inventory.
 
 See `docs/ARCHITECTURE.md` and `SECURITY.md`.
