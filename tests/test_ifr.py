@@ -58,5 +58,17 @@ class IfrTests(unittest.TestCase):
             except IfrError:
                 pass
 
+    def test_all_two_byte_ifr_headers_fail_closed(self):
+        for opcode in range(256):
+            for encoded in range(256):
+                data = bytes((opcode, encoded))
+                try:
+                    parsed = parse_ifr_stream(data)
+                except IfrError:
+                    continue
+                self.assertEqual(len(parsed), 1)
+                self.assertEqual(parsed[0].opcode, opcode)
+                self.assertEqual(parsed[0].length, 2)
+
 if __name__ == "__main__":
     unittest.main()

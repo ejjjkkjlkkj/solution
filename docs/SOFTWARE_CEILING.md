@@ -16,8 +16,14 @@ A property is not allowed to remain a hardware question if it can be reproduced 
 - OmniProbe.efi built by pinned EDK II edk2-stable202608
 - OVMF/QEMU TCG execution with fail-closed HII/evidence/final markers
 - deterministic QEMU record/replay with blkreplay
+- independent rebuild of OmniProbe.efi from source on a separate pinned Ubuntu 24.04 job
+- independent execution of that rebuilt EFI under OVMF/QEMU with a commit-bound 256-bit challenge
+- independent extraction and verification of OMNI-EVIDENCE.TXT from the mutated FAT image
 - bit-identical native output from independent runners
 - bit-identical OmniProbe.efi from independent runners
+- deterministic source bundle built only from Git-tracked files
+- embedded bundle manifest binding canonical path, byte length and SHA-256 for every tracked file
+- provenance statement binding the bundle SHA-256 to the exact Git commit
 - GitHub/Sigstore provenance attestation plus verification
 - official UEFI SCT build and runtime against pinned OVMF
 - physical-media preparation + verifier bound to the expected EFI SHA-256 and a fresh 256-bit challenge
@@ -28,6 +34,14 @@ EDK II stable 202608 is pinned to commit 2970e5699ba6267f3384ffab20f96647578aebc
 SCT runtime/build uses edk2-test-stable202509 commit 2b2a16ac239cd89d778cb79ae6e42c533fc4c25a with edk2-stable202508 commit d46aa46c8361194521391aa581593e556c707c6e.
 
 GitHub artifact attestations are treated as SLSA v1.0 Build Level 2 evidence. This repository does not claim Build Level 3 solely from an attestation.
+
+## Exact software/hardware boundary
+
+`SOFTWARE_CEILING_PASS` is software-only. It MUST NOT require the Physical AMD HIL workflow.
+
+The HIL workflow is evaluated separately. Once every software gate is PASS, any remaining uncertainty is allowed to be hardware/OEM-specific rather than an unclosed software question.
+
+The independent verification gate is not allowed to pass from an OVMF launch alone. It must rebuild OmniProbe.efi from the pinned source/toolchain, boot that exact rebuild, validate the commit-bound challenge, reject every OMNI_*_FAIL marker, and extract the evidence file produced by that execution.
 
 ## SCT distinction
 
@@ -46,6 +60,10 @@ Only after all applicable software gates are PASS may remaining uncertainty be a
 
 NOT_RUN, SKIP, timeout, missing marker, stale/mismatched physical challenge, missing artifact or unverified provenance must never become PASS.
 
-## Immutable GitHub Actions
+## Immutable GitHub Actions and runners
 
-Every external GitHub Action is pinned to a 40-hex commit SHA. Local actions are allowed; Docker actions must use a SHA-256 image digest. The mandatory workflow-policy gate rejects movable tags and `continue-on-error: true`, preventing later edits from silently weakening the software ceiling.
+Every external GitHub Action is pinned to a 40-hex commit SHA. Local actions are allowed; Docker actions must use a SHA-256 image digest.
+
+Evidence workflows must use explicit runner generations such as `ubuntu-24.04` or `windows-2025`; mutable labels such as `ubuntu-latest`, `windows-latest`, and `macos-latest` are blocking policy violations.
+
+The mandatory workflow-policy gate also rejects `continue-on-error: true`, preventing later edits from silently weakening the software ceiling.

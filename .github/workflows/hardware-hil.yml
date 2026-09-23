@@ -37,7 +37,7 @@ jobs:
       - name: Build OmniProbe
         run: |
           cd edk2
-          python3 -m pip install --upgrade -r pip-requirements.txt
+
           make -C BaseTools
           export WORKSPACE="$PWD"
           export PACKAGES_PATH="$PWD:$GITHUB_WORKSPACE/firmware"
@@ -123,7 +123,7 @@ jobs:
           name: omni-uefi-hil
           path: hil
 
-      - name: Require PsExec SYSTEM entry point
+      - name: Verify HIL artifact integrity and PsExec identity
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -134,248 +134,7 @@ jobs:
 
           $seen = @{}
           foreach ($line in Get-Content hil\SHA256SUMS.txt) {
-            if ($line -notmatch '^([0-9a-fA-F]{64})  ([^\\/]+)
-          if (-not (Test-Path $psexec)) { throw "PsExec64 missing: $psexec" }
-          $hash = (Get-FileHash -Algorithm SHA256 $psexec).Hash
-          $signature = Get-AuthenticodeSignature -FilePath $psexec
-          if ($signature.Status -ne 'Valid') { throw "PsExec Authenticode status: $($signature.Status)" }
-          if ($null -eq $signature.SignerCertificate) { throw 'PsExec signer certificate missing' }
-          if ($signature.SignerCertificate.Subject -notmatch 'Microsoft') {
-            throw "Unexpected PsExec signer: $($signature.SignerCertificate.Subject)"
-          }
-          $version = (Get-Item $psexec).VersionInfo
-          [pscustomobject]@{
-            Path = $psexec
-            SHA256 = $hash
-            AuthenticodeStatus = [string]$signature.Status
-            SignerSubject = $signature.SignerCertificate.Subject
-            SignerThumbprint = $signature.SignerCertificate.Thumbprint
-            FileVersion = $version.FileVersion
-            ProductVersion = $version.ProductVersion
-          } | ConvertTo-Json | Set-Content psexec-identity.json -Encoding utf8
-
-          $binding = Get-Content hil\omni-run-binding.json -Raw | ConvertFrom-Json
-          $challenge = (Get-Content hil\omni-challenge.txt -Raw).Trim().ToLowerInvariant()
-          if ($binding.schema -ne 'omni.hil-run-binding.v1') { throw 'Invalid HIL binding schema' }
-          if ($binding.head_sha -ne $env:GITHUB_SHA) { throw 'HIL binding head SHA mismatch' }
-          if ([string]$binding.run_id -ne [string]$env:GITHUB_RUN_ID) { throw 'HIL binding run ID mismatch' }
-          if ($binding.challenge -ne $challenge) { throw 'HIL binding challenge mismatch' }
-
-      - name: Assert physical platform under SYSTEM
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $script = Join-Path $env:GITHUB_WORKSPACE 'hil-inventory.ps1'
-          @'
-          $ErrorActionPreference = "Stop"
-          $cs = Get-CimInstance Win32_ComputerSystem
-          $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
-          $bios = Get-CimInstance Win32_BIOS
-          $board = Get-CimInstance Win32_BaseBoard
-
-          if ($cs.Manufacturer -notmatch "ASUSTeK") { throw "Unexpected manufacturer: $($cs.Manufacturer)" }
-          if ($cs.Model -notmatch "M1603QA|VivoBook") { throw "Unexpected model: $($cs.Model)" }
-          if ($cpu.Name -notmatch "Ryzen 7 5800H") { throw "Unexpected CPU: $($cpu.Name)" }
-
-          $secureBoot = $null
-          try { $secureBoot = Confirm-SecureBootUEFI -ErrorAction Stop } catch {}
-          $tpm = $null
-          try { $tpm = Get-Tpm } catch {}
-          $dg = $null
-          try { $dg = Get-CimInstance -Namespace root\Microsoft\Windows\DeviceGuard -ClassName Win32_DeviceGuard } catch {}
-
-          $sound = @(Get-CimInstance Win32_SoundDevice | Select-Object Name,Manufacturer,Status,PNPDeviceID)
-          $hda = @(Get-CimInstance Win32_PnPEntity |
-            Where-Object { $_.PNPDeviceID -match "^HDAUDIO\\|High Definition Audio" } |
-            Select-Object Name,Manufacturer,Status,PNPDeviceID)
-          $drivers = @(Get-CimInstance Win32_PnPSignedDriver |
-            Where-Object { $_.DeviceID -match "^HDAUDIO\\|VEN_1002|VEN_1022" } |
-            Select-Object DeviceName,DeviceID,DriverVersion,DriverProviderName,DriverDate,Signer)
-
-          [pscustomobject]@{
-            TimestampUtc = [DateTime]::UtcNow.ToString("o")
-            Identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-            ComputerSystem = $cs | Select-Object Manufacturer,Model,SystemType,TotalPhysicalMemory
-            Processor = $cpu | Select-Object Name,NumberOfCores,NumberOfLogicalProcessors
-            BIOS = $bios | Select-Object Manufacturer,SMBIOSBIOSVersion,Version,ReleaseDate
-            BaseBoard = $board | Select-Object Manufacturer,Product,Version
-            SecureBoot = $secureBoot
-            TPM = $tpm
-            DeviceGuard = $dg
-            SoundDevices = $sound
-            HDA = $hda
-            SignedDrivers = $drivers
-          } | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $PSScriptRoot "hardware-inventory.json") -Encoding utf8
-          '@ | Set-Content $script -Encoding utf8
-
-          $psexec = 'C:\Users\adm\Downloads\PsExec64.exe'
-          & $psexec -accepteula -nobanner -s -h -w $env:GITHUB_WORKSPACE powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $script
-          if ($LASTEXITCODE -ne 0) { throw "PsExec inventory failed: $LASTEXITCODE" }
-
-          $inventory = Get-Content hardware-inventory.json -Raw | ConvertFrom-Json
-          if ($inventory.Identity -ne 'NT AUTHORITY\SYSTEM') { throw "Expected SYSTEM, got $($inventory.Identity)" }
-
-          Get-ChildItem hil -File | Get-FileHash -Algorithm SHA256 |
-            Select-Object Path,Hash |
-            ConvertTo-Json -Depth 4 |
-            Set-Content hil-artifact-hashes.json -Encoding utf8
-
-      - name: Execute same EFI under Windows QEMU via PsExec SYSTEM
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $script = Join-Path $env:GITHUB_WORKSPACE 'hil-qemu.ps1'
-          @'
-          $ErrorActionPreference = "Stop"
-          Set-Location $PSScriptRoot
-
-          $qemu = "C:\Program Files\qemu\qemu-system-x86_64.exe"
-          if (-not (Test-Path $qemu)) {
-            $qemu = (Get-Command qemu-system-x86_64.exe -ErrorAction SilentlyContinue).Source
-          }
-          if (-not $qemu) { throw "QEMU not found" }
-
-          Remove-Item qemu-debug.log,qemu-serial.log,qemu-vars.fd -Force -ErrorAction SilentlyContinue
-          Copy-Item hil\OVMF_VARS.fd qemu-vars.fd -Force
-          $code = (Resolve-Path "hil\OVMF_CODE.fd").Path
-          $vars = (Resolve-Path "qemu-vars.fd").Path
-          $disk = (Resolve-Path "hil\omni-fat.img").Path
-          $expectedChallenge = (Get-Content "hil\omni-challenge.txt" -Raw).Trim().ToLowerInvariant()
-          if ($expectedChallenge -notmatch "^[0-9a-f]{64}$") { throw "Invalid HIL challenge artifact" }
-
-          $args = @(
-            "-machine","q35,accel=tcg",
-            "-m","256",
-            "-display","none",
-            "-serial","file:qemu-serial.log",
-            "-net","none",
-            "-debugcon","file:qemu-debug.log",
-            "-global","isa-debugcon.iobase=0x402",
-            "-drive","if=pflash,format=raw,readonly=on,file=$code",
-            "-drive","if=pflash,format=raw,file=$vars",
-            "-drive","file=$disk,format=raw"
-          )
-
-          $p = Start-Process -FilePath $qemu -ArgumentList $args -PassThru -NoNewWindow -WorkingDirectory $PSScriptRoot
-          if (-not $p.WaitForExit(60000)) {
-            $p.Kill()
-            throw "QEMU timeout"
-          }
-          if ($p.ExitCode -ne 0) { throw "QEMU exit code $($p.ExitCode)" }
-
-          $logs = @()
-          if (Test-Path qemu-debug.log) { $logs += Get-Content qemu-debug.log -Raw }
-          if (Test-Path qemu-serial.log) { $logs += Get-Content qemu-serial.log -Raw }
-          $joined = $logs -join [Environment]::NewLine
-          foreach ($marker in @("OMNI_CHALLENGE_PASS","OMNI_HII_PASS","OMNI_EVIDENCE_PASS","OMNI_UEFI_PASS")) {
-            if ($joined -notmatch [regex]::Escape($marker)) { throw "Missing QEMU proof marker: $marker" }
-          }
-          if ($joined -notmatch [regex]::Escape("OMNI_CHALLENGE=$expectedChallenge")) {
-            throw "QEMU challenge does not match this commit"
-          }
-          if ($joined -match "OMNI_(CHALLENGE|HII|EVIDENCE|UEFI)_FAIL") { throw "QEMU emitted failure marker" }
-          '@ | Set-Content $script -Encoding utf8
-
-          $psexec = 'C:\Users\adm\Downloads\PsExec64.exe'
-          & $psexec -accepteula -nobanner -s -h -w $env:GITHUB_WORKSPACE powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $script
-          if ($LASTEXITCODE -ne 0) { throw "PsExec QEMU validation failed: $LASTEXITCODE" }
-
-      - name: Execute same EFI under VMware via PsExec SYSTEM
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $script = Join-Path $env:GITHUB_WORKSPACE 'hil-vmware.ps1'
-          @'
-          $ErrorActionPreference = "Stop"
-          Set-Location $PSScriptRoot
-
-          $vmrunCandidates = @(
-            "C:\Program Files (x86)\VMware\VMware Workstation\vmrun.exe",
-            "C:\Program Files\VMware\VMware Workstation\vmrun.exe"
-          )
-          $vmrun = $vmrunCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-          if (-not $vmrun) { throw "vmrun.exe not found" }
-          $expectedChallenge = (Get-Content "hil\omni-challenge.txt" -Raw).Trim().ToLowerInvariant()
-          if ($expectedChallenge -notmatch "^[0-9a-f]{64}$") { throw "Invalid HIL challenge artifact" }
-
-          Remove-Item vmware-hil -Recurse -Force -ErrorAction SilentlyContinue
-          New-Item -ItemType Directory -Force vmware-hil | Out-Null
-          Copy-Item hil\omni-boot.vmdk vmware-hil\omni-boot.vmdk -Force
-          $serial = (Join-Path (Resolve-Path vmware-hil).Path "serial.log").Replace("\","/")
-
-          @(
-            '.encoding = "UTF-8"',
-            'config.version = "8"',
-            'virtualHW.version = "21"',
-            'displayName = "OmniExec-UEFI-HIL"',
-            'guestOS = "other-64"',
-            'firmware = "efi"',
-            'memsize = "512"',
-            'numvcpus = "1"',
-            'vhv.enable = "FALSE"',
-            'ide0:0.present = "TRUE"',
-            'ide0:0.fileName = "omni-boot.vmdk"',
-            'serial0.present = "TRUE"',
-            'serial0.fileType = "file"',
-            ('serial0.fileName = "' + $serial + '"'),
-            'serial0.tryNoRxLoss = "FALSE"',
-            'sound.present = "FALSE"',
-            'ethernet0.present = "FALSE"',
-            'usb.present = "FALSE"'
-          ) | Set-Content vmware-hil\omni.vmx -Encoding ascii
-
-          $vmx = (Resolve-Path vmware-hil\omni.vmx).Path
-          & $vmrun start $vmx nogui
-          if ($LASTEXITCODE -ne 0) { throw "vmrun start failed: $LASTEXITCODE" }
-
-          $deadline = (Get-Date).AddSeconds(90)
-          $passed = $false
-          do {
-            Start-Sleep -Milliseconds 500
-            if (Test-Path vmware-hil\serial.log) {
-              $serialText = Get-Content vmware-hil\serial.log -Raw -ErrorAction SilentlyContinue
-              $all = @("OMNI_CHALLENGE_PASS","OMNI_HII_PASS","OMNI_EVIDENCE_PASS","OMNI_UEFI_PASS") |
-                ForEach-Object { $serialText -match [regex]::Escape($_) }
-              if (($all -notcontains $false) -and
-                  ($serialText -match [regex]::Escape("OMNI_CHALLENGE=$expectedChallenge")) -and
-                  ($serialText -notmatch "OMNI_(CHALLENGE|HII|EVIDENCE|UEFI)_FAIL")) {
-                $passed = $true
-                break
-              }
-            }
-          } while ((Get-Date) -lt $deadline)
-
-          & $vmrun stop $vmx hard 2>$null
-          if (-not $passed) { throw "VMware UEFI proof markers missing" }
-          '@ | Set-Content $script -Encoding utf8
-
-          $psexec = 'C:\Users\adm\Downloads\PsExec64.exe'
-          & $psexec -accepteula -nobanner -s -h -w $env:GITHUB_WORKSPACE powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $script
-          if ($LASTEXITCODE -ne 0) { throw "PsExec VMware validation failed: $LASTEXITCODE" }
-
-      - name: Hash physical-run evidence
-        if: always()
-        run: |
-          Get-ChildItem -File -Recurse |
-            Where-Object { $_.Name -match 'hardware-inventory|psexec-identity|hil-artifact-hashes|qemu-.*\.log|serial\.log' } |
-            ForEach-Object {
-              [pscustomobject]@{
-                Path = $_.FullName
-                Bytes = $_.Length
-                SHA256 = (Get-FileHash -Algorithm SHA256 $_.FullName).Hash
-              }
-            } | ConvertTo-Json -Depth 4 | Set-Content physical-evidence-manifest.json -Encoding utf8
-
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: always()
-        with:
-          name: physical-amd-hil-evidence
-          path: |
-            psexec-identity.json
-            hardware-inventory.json
-            hil-artifact-hashes.json
-            qemu-debug.log
-            qemu-serial.log
-            vmware-hil/serial.log
-            physical-evidence-manifest.json
-) {
+            if ($line -notmatch '^([0-9a-fA-F]{64})  ([A-Za-z0-9_.-]+)$') {
               throw "Invalid SHA256SUMS line: $line"
             }
             $expected = $Matches[1].ToUpperInvariant()
@@ -395,7 +154,7 @@ jobs:
           }
 
           $psexec = 'C:\Users\adm\Downloads\PsExec64.exe'
-          if (-not (Test-Path $psexec)) { throw "PsExec64 missing: $psexec" }
+          if (-not (Test-Path $psexec -PathType Leaf)) { throw "PsExec64 missing: $psexec" }
           $hash = (Get-FileHash -Algorithm SHA256 $psexec).Hash
           $signature = Get-AuthenticodeSignature -FilePath $psexec
           if ($signature.Status -ne 'Valid') { throw "PsExec Authenticode status: $($signature.Status)" }
