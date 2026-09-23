@@ -20,6 +20,7 @@ REQUIRED_GATES = frozenset(
         "core_semantics",
         "native_verification",
         "deep_software_verification",
+        "ifr_parser_fuzz",
         "reproducibility_and_provenance",
         "uefi_sct_build",
         "uefi_sct_runtime_ovmf",
