@@ -60,6 +60,7 @@ jobs:
           export WORKSPACE="$GITHUB_WORKSPACE/edk2"
           export PACKAGES_PATH="$WORKSPACE:$GITHUB_WORKSPACE/SctPkg"
           cd edk2
+          export PYTHON_COMMAND=python3
           source edksetup.sh BaseTools
           build -a X64 -t GCC -b RELEASE -p OvmfPkg/OvmfPkgX64.dsc
           build -a X64 -t GCC -b RELEASE -p ShellPkg/ShellPkg.dsc
