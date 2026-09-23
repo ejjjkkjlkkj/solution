@@ -31,6 +31,14 @@ SOFTWARE_WORKFLOWS: dict[str, tuple[str, tuple[str, ...]]] = {
         ".github/workflows/formal-semantic-proof.yml",
         ("formal_semantic_proof",),
     ),
+    "IFR Parser Fuzz": (
+        ".github/workflows/ifr-fuzz.yml",
+        ("ifr_parser_fuzz",),
+    ),
+    "CI Workflow Lint": (
+        ".github/workflows/workflow-lint.yml",
+        ("ci_workflow_lint",),
+    ),
     "Reproducibility and Provenance": (
         ".github/workflows/reproducibility.yml",
         ("reproducibility_and_provenance",),
