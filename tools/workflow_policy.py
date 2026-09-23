@@ -12,6 +12,7 @@ CONTINUE_RE = re.compile(r"^\s*continue-on-error:\s*true\s*(?:#.*)?$", re.IGNORE
 COMMIT_REF_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 DOCKER_DIGEST_RE = re.compile(r"^docker://.+@sha256:[0-9a-fA-F]{64}$")
 MUTABLE_RUNNER_RE = re.compile(r"(?:ubuntu|windows|macos)-latest", re.IGNORECASE)
+PIP_INSTALL_RE = re.compile(r"\bpip\s+install\b", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -24,11 +25,23 @@ class Violation:
 
 def inspect_file(path: pathlib.Path) -> list[Violation]:
     violations: list[Violation] = []
-    for number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    lines = path.read_text(encoding="utf-8").splitlines()
+    for index, raw in enumerate(lines):
+        number = index + 1
         if CONTINUE_RE.match(raw):
             violations.append(Violation(str(path), number, "CONTINUE_ON_ERROR_TRUE", raw.strip()))
         if MUTABLE_RUNNER_RE.search(raw):
             violations.append(Violation(str(path), number, "MUTABLE_RUNNER_LABEL", raw.strip()))
+
+        if PIP_INSTALL_RE.search(raw):
+            command_parts = [raw.strip()]
+            cursor = index
+            while command_parts[-1].rstrip().endswith("\\") and cursor + 1 < len(lines):
+                cursor += 1
+                command_parts.append(lines[cursor].strip())
+            command = " ".join(command_parts)
+            if "--require-hashes" not in command:
+                violations.append(Violation(str(path), number, "PIP_INSTALL_WITHOUT_HASHES", command))
 
         match = USES_RE.match(raw)
         if not match:
