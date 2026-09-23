@@ -20,7 +20,7 @@ A property is not allowed to remain a hardware question if it can be reproduced 
 - bit-identical OmniProbe.efi from independent runners
 - GitHub/Sigstore provenance attestation plus verification
 - official UEFI SCT build and runtime against pinned OVMF
-- physical-media evidence verifier bound to the expected EFI SHA-256
+- physical-media preparation + verifier bound to the expected EFI SHA-256 and a fresh 256-bit challenge
 
 ## Pinned supply-chain inputs
 
@@ -44,4 +44,4 @@ Only after all applicable software gates are PASS may remaining uncertainty be a
 - TPM hardware quote/measurement behavior
 - other electrical/OEM-specific behavior
 
-NOT_RUN, SKIP, timeout, missing marker, missing artifact or unverified provenance must never become PASS.
+NOT_RUN, SKIP, timeout, missing marker, stale/mismatched physical challenge, missing artifact or unverified provenance must never become PASS.
