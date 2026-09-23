@@ -1,6 +1,7 @@
 import subprocess
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 from tools.deterministic_bundle import create_bundle
@@ -13,7 +14,12 @@ class BundleCommitBindingTests(unittest.TestCase):
         (root / "a.txt").write_text("alpha\n", encoding="utf-8")
         (root / "nested").mkdir()
         (root / "nested" / "b.bin").write_bytes(b"\x00\x01\x02")
+        (root / "run.sh").write_text("#!/bin/sh\necho omni\n", encoding="utf-8")
         subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+        subprocess.run(
+            ["git", "-C", str(root), "update-index", "--chmod=+x", "run.sh"],
+            check=True,
+        )
         subprocess.run(
             [
                 "git",
@@ -45,6 +51,17 @@ class BundleCommitBindingTests(unittest.TestCase):
             result = verify_bundle_commit(root, bundle, commit)
             self.assertEqual(result["status"], "PASS")
             self.assertEqual(result["commit"], commit)
+
+    def test_executable_git_mode_is_preserved(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self.make_repo(root)
+            bundle = root / "bundle.zip"
+            create_bundle(root, bundle)
+
+            with zipfile.ZipFile(bundle, "r") as archive:
+                mode = (archive.getinfo("run.sh").external_attr >> 16) & 0xFFFF
+            self.assertEqual(mode, 0o100755)
 
     def test_worktree_mutation_cannot_masquerade_as_commit_bundle(self):
         with tempfile.TemporaryDirectory() as td:
