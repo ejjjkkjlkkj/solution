@@ -20,9 +20,21 @@ class NavigationAndTraceTests(unittest.TestCase):
         r=check_graph(self.graph); self.assertEqual(r["status"],"FAIL")
         self.assertIn("NONDETERMINISTIC_ACTION",{x["code"] for x in r["violations"]})
 
+    def test_graph_rejects_duplicate_ids(self):
+        self.graph["nodes"].append(dict(self.graph["nodes"][1]))
+        r=check_graph(self.graph)
+        self.assertEqual(r["status"],"FAIL")
+        self.assertIn("DUPLICATE_NODE_ID",{x["code"] for x in r["violations"]})
+
     def test_trace_consensus(self):
         other=[
           {"kind":"focus_changed","timestamp":999,"node":{"id":400,"role":"CHECKBOX","name":" Secure   Boot ","value":"Enabled","state":["enabled","focused"]}},
           {"kind":"value_changed","node":{"id":400,"role":"checkbox","name":"Secure Boot","value":"Disabled","state":["focused","enabled"]}}]
         self.assertEqual(diff(self.trace,other)["status"],"PASS")
         self.assertEqual(consensus([self.trace,other,self.trace])["status"],"PASS")
+
+    def test_vacuous_trace_proofs_fail_closed(self):
+        self.assertEqual(diff([],[])["status"],"FAIL")
+        self.assertEqual(consensus([])["status"],"FAIL")
+        self.assertEqual(consensus([self.trace])["status"],"FAIL")
+        self.assertEqual(consensus([self.trace,[]])["status"],"FAIL")

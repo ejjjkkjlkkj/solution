@@ -20,12 +20,24 @@ A property is not allowed to remain a hardware question if it can be reproduced 
 - bit-identical OmniProbe.efi from independent runners
 - GitHub/Sigstore provenance attestation plus verification
 - official UEFI SCT build and runtime against pinned OVMF
-- physical-media preparation and verifier logic tested without claiming physical execution
+- physical-media preparation + verifier bound to the expected EFI SHA-256 and a fresh 256-bit challenge
 
-## Exact boundary
+## Pinned supply-chain inputs
 
-SOFTWARE_CEILING_PASS is software-only. It must not require the Physical AMD HIL workflow.
+EDK II stable 202608 is pinned to commit 2970e5699ba6267f3384ffab20f96647578aebc8.
+SCT runtime/build uses edk2-test-stable202509 commit 2b2a16ac239cd89d778cb79ae6e42c533fc4c25a with edk2-stable202508 commit d46aa46c8361194521391aa581593e556c707c6e.
+
+GitHub artifact attestations are treated as SLSA v1.0 Build Level 2 evidence. This repository does not claim Build Level 3 solely from an attestation.
+
+## Exact software/hardware boundary
+
+`SOFTWARE_CEILING_PASS` is software-only. It MUST NOT require the Physical AMD HIL workflow.
+
 The HIL workflow is evaluated separately. Once every software gate is PASS, any remaining uncertainty is allowed to be hardware/OEM-specific rather than an unclosed software question.
+
+## SCT distinction
+
+A successful SCT build or an SCT run against OVMF is not a conformance result for the ASUS firmware. OEM conformance exists only after the applicable SCT suites execute against that physical target and the result set is parsed under an explicit policy.
 
 ## Hardware-only boundary
 
@@ -36,7 +48,10 @@ Only after all applicable software gates are PASS may remaining uncertainty be a
 - physical HDA codec, amplifier/EAPD and speaker acoustics
 - real interrupt/timing/jitter behavior
 - TPM hardware quote/measurement behavior
-- Windows/QEMU and VMware HIL evidence on the physical AMD runner
 - other electrical/OEM-specific behavior
 
 NOT_RUN, SKIP, timeout, missing marker, stale/mismatched physical challenge, missing artifact or unverified provenance must never become PASS.
+
+## Immutable GitHub Actions
+
+Every external GitHub Action is pinned to a 40-hex commit SHA. Local actions are allowed; Docker actions must use a SHA-256 image digest. The mandatory workflow-policy gate rejects movable tags and `continue-on-error: true`, preventing later edits from silently weakening the software ceiling.

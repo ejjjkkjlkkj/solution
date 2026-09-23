@@ -305,8 +305,12 @@ STATIC EFI_STATUS SaveEvidence (
                    0
                    );
   if (!EFI_ERROR (Status) && (File != NULL)) {
-    File->Delete (File);
+    Status = File->Delete (File);
     File = NULL;
+    if (EFI_ERROR (Status)) {
+      Root->Close (Root);
+      return Status;
+    }
   }
 
   Status = Root->Open (

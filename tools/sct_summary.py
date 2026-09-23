@@ -27,6 +27,7 @@ def parse(text: str) -> dict[str, object]:
         if WARN_LINE.search(stripped):
             warnings += 1
     failures=len(explicit_failures)+sum(x["count"] for x in error_counts)
+    positive_evidence = passes > 0
     return {
         "schema":"omni.sct-summary.v1",
         "passes_observed":passes,
@@ -34,7 +35,8 @@ def parse(text: str) -> dict[str, object]:
         "explicit_failure_lines":explicit_failures,
         "nonzero_error_counts":error_counts,
         "failure_score":failures,
-        "status":"PASS" if failures == 0 else "FAIL",
+        "positive_evidence":positive_evidence,
+        "status":"PASS" if failures == 0 and positive_evidence else "FAIL",
     }
 
 def main() -> int:

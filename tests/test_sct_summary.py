@@ -16,5 +16,9 @@ class SctSummaryTests(unittest.TestCase):
         self.assertEqual(result["status"],"FAIL")
 
     def test_words_in_descriptions_do_not_false_positive(self):
-        result=parse("This text discusses FAILURE handling but is not a result\nErrors........... 0\n")
+        result=parse("This text discusses FAILURE handling but is not a result\nAlpha -- PASS\nErrors........... 0\n")
         self.assertEqual(result["status"],"PASS")
+
+    def test_empty_or_inconclusive_log_is_fatal(self):
+        self.assertEqual(parse("")["status"],"FAIL")
+        self.assertEqual(parse("Errors........... 0\n")["status"],"FAIL")

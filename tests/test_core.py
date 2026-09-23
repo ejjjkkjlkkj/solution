@@ -12,6 +12,31 @@ class CoreTests(unittest.TestCase):
         self.assertFalse(m.passed)
         self.assertEqual(m.violations[0]["code"], "PASSWORD_VALUE_EXPOSED")
 
+    def test_focus_unknown_node_is_reachable(self):
+        m = SemanticModel()
+        m.apply({"sequence": 1, "kind": "focus_changed", "node_id": 42})
+        self.assertFalse(m.passed)
+        self.assertEqual(m.violations[-1]["code"], "FOCUS_UNKNOWN_NODE")
+        self.assertNotIn(42, m.nodes)
+
+    def test_focus_does_not_erase_existing_semantics(self):
+        m = SemanticModel()
+        m.apply({"sequence": 1, "kind": "node_created", "node": {"id": 7, "role": "button", "name": "Boot", "state": ["enabled"]}})
+        m.apply({"sequence": 2, "kind": "focus_changed", "node_id": 7})
+        self.assertTrue(m.passed)
+        self.assertEqual(m.nodes[7].role, "button")
+        self.assertEqual(m.nodes[7].name, "Boot")
+        self.assertIn("focused", m.nodes[7].state)
+
+    def test_unknown_updates_and_events_fail_closed(self):
+        m = SemanticModel()
+        m.apply({"sequence": 1, "kind": "value_changed", "node": {"id": 9, "value": "x"}})
+        m.apply({"sequence": 2, "kind": "future_event", "node_id": 9})
+        self.assertEqual(
+            [v["code"] for v in m.violations],
+            ["UPDATE_UNKNOWN_NODE", "UNKNOWN_EVENT_KIND"],
+        )
+
     def test_flight_detects_tamper(self):
         records = build([{"layer": "uefi", "type": "focus"}, {"layer": "mm", "type": "ping"}])
         self.assertTrue(verify(records)[0])

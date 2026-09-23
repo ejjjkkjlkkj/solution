@@ -119,6 +119,8 @@ jobs:
           SUMMARY_EKL="$(find sct-results -iname Summary.ekl | head -1)"
           test -n "$SUMMARY_LOG"
           test -n "$SUMMARY_EKL"
+          test -s "$SUMMARY_LOG"
+          test -s "$SUMMARY_EKL"
           python tools/sct_summary.py "$SUMMARY_LOG" --json-out sct-summary.json --strict
 
       - name: Hash runtime evidence

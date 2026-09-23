@@ -65,7 +65,7 @@ jobs:
           PY
 
   formal-semantic-pass:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [cbmc-contract, frama-c-contract]
     steps:
       - run: echo "FORMAL_SEMANTIC_PROOF_PASS"

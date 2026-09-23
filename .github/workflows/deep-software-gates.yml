@@ -13,30 +13,31 @@ permissions:
 
 jobs:
   coverage:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Critical native coverage = 100%
         run: bash scripts/coverage_gate.sh
 
   reproducible-wheel:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.13"
-      - name: Build deterministic repository bundle twice without network dependencies
+      - name: Install hash-locked Python build toolchain
+        shell: bash
         run: |
-          mkdir -p "$RUNNER_TEMP/a" "$RUNNER_TEMP/b"
-          python tools/deterministic_bundle.py "$RUNNER_TEMP/a/software-bundle.zip" > "$RUNNER_TEMP/a/sha.txt"
-          python tools/deterministic_bundle.py "$RUNNER_TEMP/b/software-bundle.zip" > "$RUNNER_TEMP/b/sha.txt"
-          cmp --silent "$RUNNER_TEMP/a/software-bundle.zip" "$RUNNER_TEMP/b/software-bundle.zip"
-          cmp --silent "$RUNNER_TEMP/a/sha.txt" "$RUNNER_TEMP/b/sha.txt"
-          echo "DETERMINISTIC_SOURCE_BUNDLE_PASS"
+          python -m pip install \
+            --only-binary=:all: \
+            --require-hashes \
+            -r requirements-build.lock
+      - run: python -m pip check
+      - run: python scripts/reproducible_build.py
 
   qemu-ovmf-smoke:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Install QEMU and OVMF
@@ -53,10 +54,12 @@ jobs:
           test -n "$VARS_TEMPLATE"
           cp "$VARS_TEMPLATE" "$RUNNER_TEMP/OVMF_VARS.fd"
           set +e
-          timeout 8s qemu-system-x86_64 -machine q35,smm=on,accel=tcg -m 512 -nodefaults -display none -serial none -monitor none -drive if=pflash,format=raw,readonly=on,file="$CODE" -drive if=pflash,format=raw,file="$RUNNER_TEMP/OVMF_VARS.fd"
+          timeout 8s qemu-system-x86_64             -machine q35,smm=on,accel=tcg             -m 512 -nodefaults -display none -serial none -monitor none             -drive if=pflash,format=raw,readonly=on,file="$CODE"             -drive if=pflash,format=raw,file="$RUNNER_TEMP/OVMF_VARS.fd"
           rc=$?
           set -e
-          if [ "$rc" -ne 124 ] && [ "$rc" -ne 0 ]; then exit "$rc"; fi
+          if [ "$rc" -ne 124 ] && [ "$rc" -ne 0 ]; then
+            exit "$rc"
+          fi
           echo "QEMU/OVMF TCG launch gate PASS"
 
   cbmc:
@@ -67,7 +70,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release download cbmc-6.11.0 --repo diffblue/cbmc --pattern 'ubuntu-24.04-cbmc-6.11.0-Linux.deb'
+          gh release download cbmc-6.11.0 --repo diffblue/cbmc             --pattern 'ubuntu-24.04-cbmc-6.11.0-Linux.deb'
           sudo apt-get update
           sudo apt-get install -y ./ubuntu-24.04-cbmc-6.11.0-Linux.deb
           cbmc --version
@@ -105,14 +108,16 @@ jobs:
           import re
           text=open("wp.log", encoding="utf-8").read()
           goals=re.findall(r"Proved goals:\s*(\d+)\s*/\s*(\d+)", text)
-          if not goals: raise SystemExit("No Frama-C WP proof summary found")
+          if not goals:
+              raise SystemExit("No Frama-C WP proof summary found")
           proved,total=map(int,goals[-1])
-          if proved != total: raise SystemExit(f"Frama-C WP incomplete: {proved}/{total}")
+          if proved != total:
+              raise SystemExit(f"Frama-C WP incomplete: {proved}/{total}")
           print(f"Frama-C WP: {proved}/{total} proved")
           PY
 
   all-deep-gates:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [coverage, reproducible-wheel, qemu-ovmf-smoke, cbmc, frama-c]
     steps:
       - run: echo "DEEP_SOFTWARE_GATES_STRICT_PASS"
