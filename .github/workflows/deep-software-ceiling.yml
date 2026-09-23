@@ -209,7 +209,7 @@ jobs:
       - name: Execute OmniProbe in OVMF/QEMU
         run: |
           set +e
-          timeout 30s "$GITHUB_WORKSPACE/qemu-system-x86_64" -L "$GITHUB_WORKSPACE/qemu-system-x86_64.data"             -machine q35,accel=tcg -m 256             -display none -serial none -net none             -debugcon file:omni-debug.log             -global isa-debugcon.iobase=0x402             -drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.pinned.fd             -drive if=pflash,format=raw,file=OVMF_VARS.fd             -drive file=omni-fat.img,format=raw
+          timeout 30s "$GITHUB_WORKSPACE/qemu-system-x86_64" -L "$GITHUB_WORKSPACE/qemu-system-x86_64.data"             -machine q35,accel=tcg -m 256 -uuid 12345678-1234-5678-9abc-def012345678             -display none -serial none -net none             -debugcon file:omni-debug.log             -global isa-debugcon.iobase=0x402             -drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.pinned.fd             -drive if=pflash,format=raw,file=OVMF_VARS.fd             -drive file=omni-fat.img,format=raw
           rc=$?
           set -e
           cat omni-debug.log
@@ -217,6 +217,7 @@ jobs:
           grep -a 'OMNI_HII_PASS' omni-debug.log
           grep -a 'OMNI_EVIDENCE_PASS' omni-debug.log
           grep -a 'OMNI_UEFI_PASS' omni-debug.log
+          grep -a 'OMNI_PLATFORM_UUID=12345678-1234-5678-9abc-def012345678' omni-debug.log
           test "$rc" -eq 0
           mcopy -i omni-fat.img ::OMNI-EVIDENCE.TXT omni-evidence.txt
           grep -a 'OMNI_EVIDENCE_V2' omni-evidence.txt
@@ -224,6 +225,7 @@ jobs:
           grep -a "OMNI_CHALLENGE=$expected_challenge" omni-evidence.txt
           grep -a 'OMNI_HII_PASS' omni-evidence.txt
           grep -a 'OMNI_UEFI_PASS' omni-evidence.txt
+          grep -a 'OMNI_PLATFORM_UUID=12345678-1234-5678-9abc-def012345678' omni-evidence.txt
       - name: Deterministic QEMU record/replay
         run: |
           cp OVMF_VARS.pinned.fd OVMF_RR_RECORD.fd
@@ -231,7 +233,7 @@ jobs:
           rm -f omni.rr record-debug.log replay-debug.log
           set +e
           timeout 30s "$GITHUB_WORKSPACE/qemu-system-x86_64" -L "$GITHUB_WORKSPACE/qemu-system-x86_64.data" \
-            -machine q35,accel=tcg -m 256 \
+            -machine q35,accel=tcg -m 256 -uuid 12345678-1234-5678-9abc-def012345678 \
             -display none -serial none -net none \
             -debugcon file:record-debug.log \
             -global isa-debugcon.iobase=0x402 \
@@ -248,11 +250,12 @@ jobs:
           grep -a 'OMNI_HII_PASS' record-debug.log
           grep -a 'OMNI_EVIDENCE_PASS' record-debug.log
           grep -a 'OMNI_UEFI_PASS' record-debug.log
+          grep -a 'OMNI_PLATFORM_UUID=12345678-1234-5678-9abc-def012345678' record-debug.log
           test "$record_rc" -eq 0
 
           set +e
           timeout 30s "$GITHUB_WORKSPACE/qemu-system-x86_64" -L "$GITHUB_WORKSPACE/qemu-system-x86_64.data" \
-            -machine q35,accel=tcg -m 256 \
+            -machine q35,accel=tcg -m 256 -uuid 12345678-1234-5678-9abc-def012345678 \
             -display none -serial none -net none \
             -debugcon file:replay-debug.log \
             -global isa-debugcon.iobase=0x402 \
@@ -268,6 +271,7 @@ jobs:
           grep -a 'OMNI_HII_PASS' replay-debug.log
           grep -a 'OMNI_EVIDENCE_PASS' replay-debug.log
           grep -a 'OMNI_UEFI_PASS' replay-debug.log
+          grep -a 'OMNI_PLATFORM_UUID=12345678-1234-5678-9abc-def012345678' replay-debug.log
           test "$replay_rc" -eq 0
           cmp --silent record-debug.log replay-debug.log
 
