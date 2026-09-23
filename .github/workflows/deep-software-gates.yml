@@ -38,29 +38,42 @@ jobs:
 
   qemu-ovmf-smoke:
     runs-on: ubuntu-24.04
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Install QEMU and OVMF
+      - name: Install QEMU and EDK II build prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install -y qemu-system-x86 ovmf
-      - name: Boot OVMF under TCG
+          sudo apt-get install -y qemu-system-x86 build-essential nasm uuid-dev acpica-tools
+      - name: Checkout and build pinned OVMF
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch edk2-stable202608 --recurse-submodules https://github.com/tianocore/edk2.git
+          test "$(git -C edk2 rev-parse HEAD)" = "2970e5699ba6267f3384ffab20f96647578aebc8"
+          cd edk2
+          make -C BaseTools
+          export WORKSPACE="$PWD"
+          source edksetup.sh BaseTools
+          build -a X64 -t GCC -b RELEASE -p OvmfPkg/OvmfPkgX64.dsc
+          mapfile -t CODE < <(find Build -type f -path '*/FV/OVMF_CODE.fd' | sort)
+          mapfile -t VARS < <(find Build -type f -path '*/FV/OVMF_VARS.fd' | sort)
+          test "${#CODE[@]}" -eq 1
+          test "${#VARS[@]}" -eq 1
+          cp "${CODE[0]}" "$GITHUB_WORKSPACE/OVMF_CODE.pinned.fd"
+          cp "${VARS[0]}" "$GITHUB_WORKSPACE/OVMF_VARS.pinned.fd"
+      - name: Boot pinned OVMF under TCG
         shell: bash
         run: |
           set -euo pipefail
-          CODE=$(find /usr/share -iname 'OVMF_CODE.fd' | head -n1)
-          VARS_TEMPLATE=$(find /usr/share -iname 'OVMF_VARS.fd' | head -n1)
-          test -n "$CODE"
-          test -n "$VARS_TEMPLATE"
-          cp "$VARS_TEMPLATE" "$RUNNER_TEMP/OVMF_VARS.fd"
+          cp OVMF_VARS.pinned.fd "$RUNNER_TEMP/OVMF_VARS.fd"
           set +e
-          timeout 8s qemu-system-x86_64             -machine q35,smm=on,accel=tcg             -m 512 -nodefaults -display none -serial none -monitor none             -drive if=pflash,format=raw,readonly=on,file="$CODE"             -drive if=pflash,format=raw,file="$RUNNER_TEMP/OVMF_VARS.fd"
+          timeout 8s qemu-system-x86_64             -machine q35,smm=on,accel=tcg             -m 512 -nodefaults -display none -serial none -monitor none             -drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.pinned.fd             -drive if=pflash,format=raw,file="$RUNNER_TEMP/OVMF_VARS.fd"
           rc=$?
           set -e
           if [ "$rc" -ne 124 ] && [ "$rc" -ne 0 ]; then
             exit "$rc"
           fi
-          echo "QEMU/OVMF TCG launch gate PASS"
+          echo "QEMU/PINNED_OVMF TCG launch gate PASS"
 
   cbmc:
     runs-on: ubuntu-24.04
