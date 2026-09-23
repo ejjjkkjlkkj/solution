@@ -23,14 +23,19 @@ env:
 jobs:
   sct-runtime:
     runs-on: ubuntu-24.04
-    timeout-minutes: 70
+    timeout-minutes: 105
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential nasm uuid-dev python3-pip mtools dosfstools qemu-system-x86 acpica-tools
+          sudo apt-get install -y build-essential nasm uuid-dev acpica-tools mtools dosfstools \
+            ninja-build pkg-config libglib2.0-dev libpixman-1-dev zlib1g-dev \
+            python3-venv wget gnupg xz-utils
+
+      - name: Build signature-verified QEMU 11.1.1
+        run: bash scripts/build_pinned_qemu.sh "$GITHUB_WORKSPACE/qemu-system-x86_64"
 
       - name: Checkout pinned EDK II and SCT
         run: |
@@ -42,7 +47,6 @@ jobs:
 
       - name: Build official SCT
         run: |
-
           chmod +x SctPkg/build.sh
           ./SctPkg/build.sh X64 GCC RELEASE
           SCT_PACKAGE="$GITHUB_WORKSPACE/Build/UefiSct/RELEASE_GCC5/SctPackageX64"
@@ -56,6 +60,7 @@ jobs:
           export WORKSPACE="$GITHUB_WORKSPACE/edk2"
           export PACKAGES_PATH="$WORKSPACE:$GITHUB_WORKSPACE/SctPkg"
           cd edk2
+          export PYTHON_COMMAND=python3
           source edksetup.sh BaseTools
           build -a X64 -t GCC -b RELEASE -p OvmfPkg/OvmfPkgX64.dsc
           build -a X64 -t GCC -b RELEASE -p ShellPkg/ShellPkg.dsc
@@ -99,7 +104,7 @@ jobs:
         run: |
           cp OVMF_VARS.fd OVMF_SCT_VARS.fd
           set +e
-          timeout --signal=TERM 55m qemu-system-x86_64             -machine q35,accel=tcg             -m 2048             -display none             -monitor none             -serial file:sct-serial.log             -net none             -drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.fd             -drive if=pflash,format=raw,file=OVMF_SCT_VARS.fd             -drive file=sct-runtime.img,format=raw
+          timeout --signal=TERM 55m "$GITHUB_WORKSPACE/qemu-system-x86_64"             -machine q35,accel=tcg             -m 2048             -display none             -monitor none             -serial file:sct-serial.log             -net none             -drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.fd             -drive if=pflash,format=raw,file=OVMF_SCT_VARS.fd             -drive file=sct-runtime.img,format=raw
           QEMU_RC=$?
           set -e
           echo "QEMU_RC=$QEMU_RC"
