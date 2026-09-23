@@ -108,6 +108,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
+      - name: Build signature-verified QEMU 11.1.1
+        run: bash scripts/build_pinned_qemu.sh "$GITHUB_WORKSPACE/"$GITHUB_WORKSPACE/qemu-system-x86_64""
+
       - name: Checkout EDK II stable 202608
         run: |
           git clone --depth 1 --branch edk2-stable202608 --recurse-submodules https://github.com/tianocore/edk2.git
@@ -153,13 +156,15 @@ jobs:
 
   uefi-qemu:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 80
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Install QEMU/OVMF and EDK II prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential nasm uuid-dev qemu-system-x86 ovmf mtools dosfstools
+          sudo apt-get install -y build-essential nasm uuid-dev acpica-tools mtools dosfstools \
+            ninja-build pkg-config libglib2.0-dev libpixman-1-dev zlib1g-dev \
+            python3-venv wget gnupg xz-utils
       - name: Checkout EDK II stable 202608
         run: |
           git clone --depth 1 --branch edk2-stable202608 --recurse-submodules https://github.com/tianocore/edk2.git
@@ -173,6 +178,13 @@ jobs:
           source edksetup.sh BaseTools
           build -a X64 -t GCC -b RELEASE -p "$GITHUB_WORKSPACE/firmware/OmniPkg/OmniPkg.dsc"
           find Build/OmniPkg -iname OmniProbe.efi -print
+          build -a X64 -t GCC -b RELEASE -p OvmfPkg/OvmfPkgX64.dsc
+          mapfile -t OVMF_CODE < <(find Build -type f -path '*/FV/OVMF_CODE.fd' | sort)
+          mapfile -t OVMF_VARS < <(find Build -type f -path '*/FV/OVMF_VARS.fd' | sort)
+          test "${#OVMF_CODE[@]}" -eq 1
+          test "${#OVMF_VARS[@]}" -eq 1
+          cp "${OVMF_CODE[0]}" "$GITHUB_WORKSPACE/OVMF_CODE.pinned.fd"
+          cp "${OVMF_VARS[0]}" "$GITHUB_WORKSPACE/OVMF_VARS.pinned.fd"
       - name: Build bootable FAT image
         run: |
           EFI_BIN="$(find edk2/Build/OmniPkg -iname OmniProbe.efi | head -1)"
@@ -185,11 +197,11 @@ jobs:
           printf '%s' "$GITHUB_SHA" | sha256sum | awk '{print $1}' > omni-challenge.txt
           mcopy -i omni-fat.img omni-challenge.txt ::/OMNI-CHALLENGE.TXT
           cp omni-fat.img omni-rr-base.img
-          cp /usr/share/OVMF/OVMF_VARS.fd OVMF_VARS.fd
+          cp OVMF_VARS.pinned.fd OVMF_VARS.fd
       - name: Execute OmniProbe in OVMF/QEMU
         run: |
           set +e
-          timeout 30s qemu-system-x86_64             -machine q35,accel=tcg -m 256             -display none -serial none -net none             -debugcon file:omni-debug.log             -global isa-debugcon.iobase=0x402             -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE.fd             -drive if=pflash,format=raw,file=OVMF_VARS.fd             -drive file=omni-fat.img,format=raw
+          timeout 30s "$GITHUB_WORKSPACE/qemu-system-x86_64"             -machine q35,accel=tcg -m 256             -display none -serial none -net none             -debugcon file:omni-debug.log             -global isa-debugcon.iobase=0x402             -drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.pinned.fd             -drive if=pflash,format=raw,file=OVMF_VARS.fd             -drive file=omni-fat.img,format=raw
           rc=$?
           set -e
           cat omni-debug.log
@@ -206,17 +218,17 @@ jobs:
           grep -a 'OMNI_UEFI_PASS' omni-evidence.txt
       - name: Deterministic QEMU record/replay
         run: |
-          cp /usr/share/OVMF/OVMF_VARS.fd OVMF_RR_RECORD.fd
-          cp /usr/share/OVMF/OVMF_VARS.fd OVMF_RR_REPLAY.fd
+          cp OVMF_VARS.pinned.fd OVMF_RR_RECORD.fd
+          cp OVMF_VARS.pinned.fd OVMF_RR_REPLAY.fd
           rm -f omni.rr record-debug.log replay-debug.log
           set +e
-          timeout 30s qemu-system-x86_64 \
+          timeout 30s "$GITHUB_WORKSPACE/qemu-system-x86_64" \
             -machine q35,accel=tcg -m 256 \
             -display none -serial none -net none \
             -debugcon file:record-debug.log \
             -global isa-debugcon.iobase=0x402 \
             -icount shift=auto,rr=record,rrfile=omni.rr \
-            -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE.fd \
+            -drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.pinned.fd \
             -drive if=pflash,format=raw,file=OVMF_RR_RECORD.fd \
             -drive file=omni-rr-base.img,format=raw,if=none,snapshot=on,id=img-direct \
             -drive driver=blkreplay,if=none,image=img-direct,id=img-blkreplay \
@@ -231,13 +243,13 @@ jobs:
           test "$record_rc" -eq 0
 
           set +e
-          timeout 30s qemu-system-x86_64 \
+          timeout 30s "$GITHUB_WORKSPACE/qemu-system-x86_64" \
             -machine q35,accel=tcg -m 256 \
             -display none -serial none -net none \
             -debugcon file:replay-debug.log \
             -global isa-debugcon.iobase=0x402 \
             -icount shift=auto,rr=replay,rrfile=omni.rr \
-            -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE.fd \
+            -drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.pinned.fd \
             -drive if=pflash,format=raw,file=OVMF_RR_REPLAY.fd \
             -drive file=omni-rr-base.img,format=raw,if=none,snapshot=on,id=img-direct \
             -drive driver=blkreplay,if=none,image=img-direct,id=img-blkreplay \
