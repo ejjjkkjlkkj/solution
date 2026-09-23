@@ -23,6 +23,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release download cbmc-6.11.0 --repo diffblue/cbmc --pattern 'ubuntu-24.04-cbmc-6.11.0-Linux.deb'
+          echo "b3721aa541038384d7801ea3aeabbcddc3e8845ac8f1cbff637cf8dec7481ac8  ubuntu-24.04-cbmc-6.11.0-Linux.deb" | sha256sum -c -
           sudo apt-get update
           sudo apt-get install -y ./ubuntu-24.04-cbmc-6.11.0-Linux.deb
           cbmc --version

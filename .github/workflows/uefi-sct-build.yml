@@ -34,7 +34,7 @@ jobs:
       - name: Assemble SCT workspace
         run: |
           cp -a edk2-test/uefi-sct/SctPkg ./SctPkg
-          python3 -m pip install --upgrade -r edk2/pip-requirements.txt
+
       - name: Build official UEFI SCT X64
         run: |
           chmod +x SctPkg/build.sh

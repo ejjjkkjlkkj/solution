@@ -24,11 +24,12 @@ class CiCeilingManifestTests(unittest.TestCase):
         event="push",
         path=None,
     ):
-        known_paths = {**WORKFLOW_PATHS, **HARDWARE_WORKFLOW_PATHS}
+        if path is None:
+            path = WORKFLOW_PATHS.get(name) or HARDWARE_WORKFLOW_PATHS.get(name)
         return {
             "id": run_number,
             "name": name,
-            "path": path if path is not None else known_paths[name],
+            "path": path,
             "head_sha": self.SHA,
             "event": event,
             "run_number": run_number,
@@ -81,7 +82,10 @@ class CiCeilingManifestTests(unittest.TestCase):
         ]
         manifest, details = build({"workflow_runs": runs}, self.SHA)
         self.assertFalse(details["ready"])
-        self.assertNotEqual(evaluate(manifest)["status"], "SOFTWARE_CEILING_PASS")
+        self.assertNotEqual(
+            evaluate(manifest)["status"],
+            "SOFTWARE_CEILING_PASS",
+        )
 
         runs.append(
             self.make_run(
@@ -91,7 +95,7 @@ class CiCeilingManifestTests(unittest.TestCase):
                 conclusion=None,
             )
         )
-        manifest, details = build({"workflow_runs": runs}, self.SHA)
+        _manifest, details = build({"workflow_runs": runs}, self.SHA)
         self.assertFalse(details["ready"])
 
     def test_failure_is_terminal_but_blocks_pass(self):
@@ -112,11 +116,17 @@ class CiCeilingManifestTests(unittest.TestCase):
         ]
         target = names[0]
         runs = [run for run in runs if run["name"] != target]
-        runs.append(self.make_run(target, run_number=100, event="pull_request"))
-        manifest, details = build({"workflow_runs": runs}, self.SHA)
+        runs.append(
+            self.make_run(
+                target,
+                run_number=100,
+                event="pull_request",
+            )
+        )
+        _manifest, details = build({"workflow_runs": runs}, self.SHA)
         self.assertFalse(details["ready"])
 
-    def test_wrong_workflow_path_cannot_spoof_gate(self):
+    def test_homonymous_workflow_wrong_path_cannot_substitute(self):
         names = list(WORKFLOW_TO_GATES)
         runs = [
             self.make_run(name, run_number=i + 1)
@@ -127,53 +137,62 @@ class CiCeilingManifestTests(unittest.TestCase):
         runs.append(
             self.make_run(
                 target,
-                run_number=200,
-                path=".github/workflows/spoofed-success.yml",
+                run_number=500,
+                path=".github/workflows/attacker-lookalike.yml",
             )
         )
+
         manifest, details = build({"workflow_runs": runs}, self.SHA)
         self.assertFalse(details["ready"])
-        self.assertEqual(
-            details["workflows"][target]["expected_path"],
-            WORKFLOW_PATHS[target],
-        )
+        self.assertEqual(details["workflows"][target]["status"], "missing")
         for gate in WORKFLOW_TO_GATES[target]:
             self.assertEqual(manifest[gate], "MISSING")
 
-    def test_wrong_path_duplicate_is_ignored_when_real_run_exists(self):
+    def test_wrong_path_newer_run_does_not_override_canonical_run(self):
         runs = [
             self.make_run(name, run_number=i + 1)
             for i, name in enumerate(WORKFLOW_TO_GATES)
         ]
         target = next(iter(WORKFLOW_TO_GATES))
-        real = next(run for run in runs if run["name"] == target)
         runs.append(
             self.make_run(
                 target,
                 run_number=999,
                 conclusion="failure",
-                path=".github/workflows/not-the-authorized-workflow.yml",
+                path=".github/workflows/lookalike.yml",
             )
         )
+
         manifest, details = build({"workflow_runs": runs}, self.SHA)
         self.assertTrue(details["ready"])
-        self.assertEqual(
-            details["workflows"][target]["run_number"],
-            real["run_number"],
-        )
+        self.assertEqual(details["workflows"][target]["path"], WORKFLOW_PATHS[target])
         self.assertEqual(evaluate(manifest)["status"], "SOFTWARE_CEILING_PASS")
 
-    def test_latest_push_run_controls_gate(self):
+    def test_latest_canonical_push_run_controls_gate(self):
         runs = [
             self.make_run(name, run_number=i + 1)
             for i, name in enumerate(WORKFLOW_TO_GATES)
         ]
         target = next(iter(WORKFLOW_TO_GATES))
-        runs.append(self.make_run(target, run_number=200, conclusion="failure"))
+        runs.append(
+            self.make_run(
+                target,
+                run_number=200,
+                conclusion="failure",
+            )
+        )
         manifest, details = build({"workflow_runs": runs}, self.SHA)
         self.assertTrue(details["ready"])
         self.assertEqual(details["workflows"][target]["run_number"], 200)
-        self.assertNotEqual(evaluate(manifest)["status"], "SOFTWARE_CEILING_PASS")
+        self.assertNotEqual(
+            evaluate(manifest)["status"],
+            "SOFTWARE_CEILING_PASS",
+        )
+
+    def test_malformed_runs_payload_fails_closed(self):
+        manifest, details = build({"workflow_runs": "not-a-list"}, self.SHA)
+        self.assertFalse(details["ready"])
+        self.assertTrue(all(status == "MISSING" for status in manifest.values()))
 
 
 if __name__ == "__main__":

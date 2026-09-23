@@ -42,7 +42,7 @@ jobs:
 
       - name: Build official SCT
         run: |
-          python3 -m pip install --upgrade -r edk2/pip-requirements.txt
+
           chmod +x SctPkg/build.sh
           ./SctPkg/build.sh X64 GCC RELEASE
           SCT_PACKAGE="$GITHUB_WORKSPACE/Build/UefiSct/RELEASE_GCC5/SctPackageX64"
@@ -105,6 +105,10 @@ jobs:
           echo "QEMU_RC=$QEMU_RC"
           if [ "$QEMU_RC" -eq 124 ]; then
             echo "SCT runtime timed out before returning to startup.nsh" >&2
+            exit 1
+          fi
+          if [ "$QEMU_RC" -ne 0 ]; then
+            echo "SCT QEMU exited abnormally: $QEMU_RC" >&2
             exit 1
           fi
           mcopy -i sct-runtime.img ::/SCT-DONE.TXT SCT-DONE.TXT
