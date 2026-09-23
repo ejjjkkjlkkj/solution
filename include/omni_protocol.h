@@ -52,6 +52,7 @@ enum { OMNI_A11Y_PASSWORD = 1u << 0 };
           header->payload_size <= OMNI_MM_MAX_PAYLOAD &&
           header->payload_size <= buffer_size - sizeof(omni_mm_header) &&
           1 <= header->command <= 16 ==> \result == OMNI_OK;
+  assigns \nothing;
 */
 omni_status omni_mm_validate(const omni_mm_header *header, size_t buffer_size);
 
@@ -67,6 +68,7 @@ omni_status omni_mm_validate(const omni_mm_header *header, size_t buffer_size);
   ensures node != \null && node->name_length > 0 &&
           (node->state & OMNI_A11Y_PASSWORD) != 0 && node->value_length != 0
           ==> \result == OMNI_ERR_SECRET;
+  assigns \nothing;
 */
 omni_status omni_a11y_validate(const omni_a11y_node *node);
 
