@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Install toolchain
         run: |
           sudo apt-get update
@@ -75,7 +75,7 @@ jobs:
           cp /usr/share/OVMF/OVMF_CODE.fd .
           cp /usr/share/OVMF/OVMF_VARS.fd .
           sha256sum OmniProbe.efi omni-challenge.txt omni-fat.img omni-gpt.img omni-boot.vmdk OVMF_CODE.fd OVMF_VARS.fd > SHA256SUMS.txt
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: omni-uefi-hil
           path: |
@@ -96,8 +96,8 @@ jobs:
       run:
         shell: pwsh
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: omni-uefi-hil
           path: hil
@@ -244,7 +244,7 @@ jobs:
                 SHA256 = (Get-FileHash -Algorithm SHA256 $_.FullName).Hash
               }
             } | ConvertTo-Json -Depth 4 | Set-Content physical-evidence-manifest.json -Encoding utf8
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: physical-amd-hil-evidence
@@ -347,7 +347,7 @@ jobs:
                 SHA256 = (Get-FileHash -Algorithm SHA256 $_.FullName).Hash
               }
             } | ConvertTo-Json -Depth 4 | Set-Content physical-evidence-manifest.json -Encoding utf8
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: physical-amd-hil-evidence
@@ -418,7 +418,7 @@ jobs:
                 SHA256 = (Get-FileHash -Algorithm SHA256 $_.FullName).Hash
               }
             } | ConvertTo-Json -Depth 4 | Set-Content physical-evidence-manifest.json -Encoding utf8
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: physical-amd-hil-evidence
@@ -521,7 +521,7 @@ jobs:
                 SHA256 = (Get-FileHash -Algorithm SHA256 $_.FullName).Hash
               }
             } | ConvertTo-Json -Depth 4 | Set-Content physical-evidence-manifest.json -Encoding utf8
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: physical-amd-hil-evidence

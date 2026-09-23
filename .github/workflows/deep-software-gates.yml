@@ -12,15 +12,15 @@ jobs:
   coverage:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Critical native coverage = 100%
         run: bash scripts/coverage_gate.sh
 
   reproducible-wheel:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.13"
       - run: python -m pip install --upgrade build
@@ -29,7 +29,7 @@ jobs:
   qemu-ovmf-smoke:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Install QEMU and OVMF
         run: |
           sudo apt-get update
@@ -55,7 +55,7 @@ jobs:
   cbmc:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Install pinned CBMC 6.11.0
         env:
           GH_TOKEN: ${{ github.token }}
@@ -76,7 +76,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Install pinned Frama-C 33
         run: |
           sudo apt-get update
