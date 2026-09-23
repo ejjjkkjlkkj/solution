@@ -1,0 +1,173 @@
+name: Deep Software Ceiling
+
+on:
+  push:
+    branches:
+      - main
+      - "dev/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Instrument native core
+        run: >-
+          clang -std=c11 -O0 -Wall -Wextra -Wpedantic -Werror
+          -fprofile-instr-generate -fcoverage-mapping
+          -Iinclude c/omni_protocol.c tests/c/test_protocol.c -o protocol_cov
+      - run: LLVM_PROFILE_FILE=protocol.profraw ./protocol_cov
+      - run: llvm-profdata merge -sparse protocol.profraw -o protocol.profdata
+      - run: llvm-cov export ./protocol_cov -instr-profile=protocol.profdata c/omni_protocol.c > coverage.json
+      - run: python tools/coverage_gate.py coverage.json c/omni_protocol.c
+
+  fuzz-100k:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build libFuzzer + ASan + UBSan
+        run: >-
+          clang -std=c11 -Wall -Wextra -Wpedantic -Werror
+          -fsanitize=fuzzer,address,undefined
+          -Iinclude c/omni_protocol.c fuzz/mm_fuzz.c -o mm_fuzz
+      - run: ./mm_fuzz -runs=100000 -max_len=8192
+
+  cbmc:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install CBMC 6.11.0
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download cbmc-6.11.0 --repo diffblue/cbmc --pattern 'ubuntu-24.04-cbmc-6.11.0-Linux.deb'
+          sudo apt-get update
+          sudo apt-get install -y ./ubuntu-24.04-cbmc-6.11.0-Linux.deb
+          cbmc --version
+      - name: Prove protocol invariants
+        run: >-
+          cbmc formal/cbmc_protocol.c c/omni_protocol.c
+          -I include
+          --bounds-check --pointer-check
+          --signed-overflow-check --unsigned-overflow-check
+          --div-by-zero-check --pointer-overflow-check
+
+  framac:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Frama-C 33 through opam
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y opam libgmp-dev
+          opam init --disable-sandboxing -y
+          opam switch create 5.3.0 -y
+          eval "$(opam env)"
+          opam install -y frama-c.33.0
+          frama-c -version
+      - name: Eva value analysis
+        run: |
+          eval "$(opam env)"
+          frama-c -eva -eva-precision 3 -cpp-extra-args="-Iinclude" c/omni_protocol.c
+      - name: WP/RTE proof obligations
+        run: |
+          eval "$(opam env)"
+          frama-c -wp -wp-rte -cpp-extra-args="-Iinclude" c/omni_protocol.c 2>&1 | tee wp.log
+          python - <<'PY'
+          import re
+          text=open("wp.log", encoding="utf-8").read()
+          goals=re.findall(r"Proved goals:\s*(\d+)\s*/\s*(\d+)", text)
+          if not goals:
+              raise SystemExit("No Frama-C WP proof summary found")
+          proved,total=map(int,goals[-1])
+          if proved != total:
+              raise SystemExit(f"Frama-C WP incomplete: {proved}/{total}")
+          print(f"Frama-C WP: {proved}/{total} proved")
+          PY
+
+  edk2-host-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Checkout EDK II stable 202608
+        run: git clone --depth 1 --branch edk2-stable202608 --recurse-submodules https://github.com/tianocore/edk2.git
+      - name: Install prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential lcov nasm uuid-dev
+          python3 -m pip install --upgrade -r edk2/pip-requirements.txt
+      - name: Run official MdePkg host tests with ASan enabled
+        working-directory: edk2
+        env:
+          ASAN_OPTIONS: detect_leaks=0
+        run: |
+          stuart_setup -c ./.pytool/CISettings.py TOOL_CHAIN_TAG=GCC
+          stuart_update -c ./.pytool/CISettings.py TOOL_CHAIN_TAG=GCC
+          stuart_ci_build -c ./.pytool/CISettings.py TOOL_CHAIN_TAG=GCC -t NOOPT -p MdePkg
+
+  uefi-qemu:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install QEMU/OVMF and EDK II prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential nasm uuid-dev qemu-system-x86 ovmf mtools dosfstools
+      - name: Checkout EDK II stable 202608
+        run: git clone --depth 1 --branch edk2-stable202608 --recurse-submodules https://github.com/tianocore/edk2.git
+      - name: Build OmniProbe.efi with real EDK II
+        run: |
+          cd edk2
+          python3 -m pip install --upgrade -r pip-requirements.txt
+          make -C BaseTools
+          export WORKSPACE="$PWD"
+          export PACKAGES_PATH="$PWD:$GITHUB_WORKSPACE/firmware"
+          source edksetup.sh BaseTools
+          build -a X64 -t GCC5 -b RELEASE -p "$GITHUB_WORKSPACE/firmware/OmniPkg/OmniPkg.dsc"
+          find Build/OmniPkg -iname OmniProbe.efi -print
+      - name: Build bootable FAT image
+        run: |
+          EFI_BIN="$(find edk2/Build/OmniPkg -iname OmniProbe.efi | head -1)"
+          test -n "$EFI_BIN"
+          truncate -s 64M omni-fat.img
+          mkfs.vfat omni-fat.img
+          mmd -i omni-fat.img ::/EFI
+          mmd -i omni-fat.img ::/EFI/BOOT
+          mcopy -i omni-fat.img "$EFI_BIN" ::/EFI/BOOT/BOOTX64.EFI
+          cp /usr/share/OVMF/OVMF_VARS.fd OVMF_VARS.fd
+      - name: Execute OmniProbe in OVMF/QEMU
+        run: |
+          set +e
+          timeout 30s qemu-system-x86_64             -machine q35,accel=tcg -m 256             -display none -serial none             -debugcon file:omni-debug.log             -global isa-debugcon.iobase=0x402             -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE.fd             -drive if=pflash,format=raw,file=OVMF_VARS.fd             -drive file=omni-fat.img,format=raw
+          rc=$?
+          set -e
+          cat omni-debug.log
+          grep -a 'OMNI_UEFI_PASS' omni-debug.log
+          test "$rc" -eq 0 -o "$rc" -eq 124
+
+  compiler-differential:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        cc: [gcc, clang]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and run under both compilers
+        run: |
+          ${{ matrix.cc }} -std=c11 -O2 -Wall -Wextra -Wpedantic -Werror -Iinclude c/omni_protocol.c tests/c/test_protocol.c -o protocol_test
+          ./protocol_test
+
+  software-deep-pass:
+    runs-on: ubuntu-latest
+    needs: [coverage, fuzz-100k, cbmc, framac, edk2-host-tests, uefi-qemu, compiler-differential]
+    steps:
+      - run: echo "DEEP_SOFTWARE_GATES_PASS"

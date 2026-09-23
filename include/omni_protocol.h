@@ -36,7 +36,23 @@ typedef struct {
 
 enum { OMNI_A11Y_PASSWORD = 1u << 0 };
 
+/*@
+  requires header == \null || \valid_read(header);
+  ensures \result == OMNI_OK ==> header != \null;
+  ensures \result == OMNI_OK ==> buffer_size >= sizeof(omni_mm_header);
+  ensures \result == OMNI_OK ==> header->magic == OMNI_MM_MAGIC;
+  ensures \result == OMNI_OK ==> header->version == OMNI_MM_VERSION;
+  ensures \result == OMNI_OK ==> header->payload_size <= OMNI_MM_MAX_PAYLOAD;
+  ensures \result == OMNI_OK ==> header->command >= 1 && header->command <= 16;
+*/
 omni_status omni_mm_validate(const omni_mm_header *header, size_t buffer_size);
+
+/*@
+  requires node == \null || \valid_read(node);
+  ensures \result == OMNI_OK ==> node != \null;
+  ensures \result == OMNI_OK ==> node->name_length > 0;
+  ensures \result == OMNI_OK ==> ((node->state & OMNI_A11Y_PASSWORD) == 0 || node->value_length == 0);
+*/
 omni_status omni_a11y_validate(const omni_a11y_node *node);
 
 #endif

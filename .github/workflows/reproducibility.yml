@@ -1,0 +1,67 @@
+name: Reproducibility and Provenance
+
+on:
+  push:
+    branches:
+      - main
+      - "dev/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+
+jobs:
+  build-a:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deterministic native build A
+        run: |
+          export SOURCE_DATE_EPOCH=0
+          clang -std=c11 -O2 -fno-ident -ffile-prefix-map="$GITHUB_WORKSPACE"=. -Wl,--build-id=none -Iinclude c/omni_protocol.c tools/protocol_probe.c -o protocol_probe
+          sha256sum protocol_probe > protocol_probe.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reproducible-a
+          path: |
+            protocol_probe
+            protocol_probe.sha256
+
+  build-b:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deterministic native build B
+        run: |
+          export SOURCE_DATE_EPOCH=0
+          clang -std=c11 -O2 -fno-ident -ffile-prefix-map="$GITHUB_WORKSPACE"=. -Wl,--build-id=none -Iinclude c/omni_protocol.c tools/protocol_probe.c -o protocol_probe
+          sha256sum protocol_probe > protocol_probe.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reproducible-b
+          path: |
+            protocol_probe
+            protocol_probe.sha256
+
+  compare-and-attest:
+    runs-on: ubuntu-24.04
+    needs: [build-a, build-b]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: reproducible-a
+          path: a
+      - uses: actions/download-artifact@v4
+        with:
+          name: reproducible-b
+          path: b
+      - name: Require bit-identical output from independent runners
+        run: |
+          sha256sum a/protocol_probe b/protocol_probe
+          cmp --silent a/protocol_probe b/protocol_probe
+      - name: Attest reproducible binary provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: a/protocol_probe
