@@ -74,6 +74,7 @@ jobs:
           export PACKAGES_PATH="$WORKSPACE:$GITHUB_WORKSPACE/firmware"
           export SOURCE_DATE_EPOCH="$(git -C edk2 show -s --format=%ct "$EDK2_SHA")"
           cd edk2
+          export PYTHON_COMMAND=python3
           source edksetup.sh BaseTools
           build -a X64 -t GCC -b RELEASE -p "$GITHUB_WORKSPACE/firmware/OmniPkg/OmniPkg.dsc"
           EFI_BIN="$(find Build/OmniPkg -iname OmniProbe.efi | head -1)"
@@ -107,6 +108,7 @@ jobs:
           export PACKAGES_PATH="$WORKSPACE:$GITHUB_WORKSPACE/firmware"
           export SOURCE_DATE_EPOCH="$(git -C edk2 show -s --format=%ct "$EDK2_SHA")"
           cd edk2
+          export PYTHON_COMMAND=python3
           source edksetup.sh BaseTools
           build -a X64 -t GCC -b RELEASE -p "$GITHUB_WORKSPACE/firmware/OmniPkg/OmniPkg.dsc"
           EFI_BIN="$(find Build/OmniPkg -iname OmniProbe.efi | head -1)"
