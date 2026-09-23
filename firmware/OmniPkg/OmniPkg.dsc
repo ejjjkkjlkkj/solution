@@ -8,6 +8,8 @@
   BUILD_TARGETS                  = DEBUG|RELEASE
   SKUID_IDENTIFIER               = DEFAULT
 
+!include MdePkg/MdeLibs.dsc.inc
+
 [LibraryClasses]
   UefiApplicationEntryPoint|MdePkg/Library/UefiApplicationEntryPoint/UefiApplicationEntryPoint.inf
   BaseLib|MdePkg/Library/BaseLib/BaseLib.inf
