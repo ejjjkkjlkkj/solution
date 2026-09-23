@@ -12,7 +12,7 @@ CONTINUE_RE = re.compile(r"^\s*continue-on-error:\s*true\s*(?:#.*)?$", re.IGNORE
 COMMIT_REF_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 DOCKER_DIGEST_RE = re.compile(r"^docker://.+@sha256:[0-9a-fA-F]{64}$")
 MUTABLE_RUNNER_RE = re.compile(r"(?:ubuntu|windows|macos)-latest", re.IGNORECASE)
-PIP_INSTALL_RE = re.compile(r"\\bpip\\s+install\\b", re.IGNORECASE)
+PIP_INSTALL_RE = re.compile(r"\bpip\s+install\b", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
