@@ -70,12 +70,8 @@ class BundleCommitBindingTests(unittest.TestCase):
             (root / "a.txt").write_text("mutated but uncommitted\n", encoding="utf-8")
 
             bundle = root / "dirty.zip"
-            create_bundle(root, bundle)
-            result = verify_bundle_commit(root, bundle, commit)
-
-            self.assertEqual(result["status"], "FAIL")
-            self.assertIn("COMMIT_CONTENT_MISMATCH:a.txt", result["failures"])
-            self.assertIn("COMMIT_DIGEST_MISMATCH:a.txt", result["failures"])
+            with self.assertRaisesRegex(ValueError, "tracked worktree is dirty"):
+                create_bundle(root, bundle)
 
 
 if __name__ == "__main__":
