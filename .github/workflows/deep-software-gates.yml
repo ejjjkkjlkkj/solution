@@ -58,6 +58,7 @@ jobs:
           cd edk2
           make -C BaseTools
           export WORKSPACE="$PWD"
+          export PYTHON_COMMAND=python3
           source edksetup.sh BaseTools
           build -a X64 -t GCC -b RELEASE -p OvmfPkg/OvmfPkgX64.dsc
           mapfile -t CODE < <(find Build -type f -path '*/FV/OVMF_CODE.fd' | sort)
