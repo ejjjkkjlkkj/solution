@@ -85,13 +85,12 @@ jobs:
           mcopy -i sct-runtime.img "$SCT_PACKAGE/SctStartup.nsh" ::/SctStartup.nsh
           printf 'verbose\n' > verbose.mode
           mcopy -i sct-runtime.img verbose.mode ::/Sct/.verbose.mode
-          cat > startup.nsh <<'NSH'
-echo -off
-fs0:
-fs0:\SctStartup.nsh
-echo OMNI_SCT_RETURNED > fs0:\SCT-DONE.TXT
-reset -s
-NSH
+          printf '%s\n' \
+            'echo -off' \
+            'fs0:' \
+            'fs0:\\SctStartup.nsh' \
+            'echo OMNI_SCT_RETURNED > fs0:\\SCT-DONE.TXT' \
+            'reset -s' > startup.nsh
           mcopy -i sct-runtime.img startup.nsh ::/startup.nsh
           mdir -i sct-runtime.img ::/
           mdir -i sct-runtime.img ::/Sct
