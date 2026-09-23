@@ -2,6 +2,7 @@
 #include <Protocol/HiiDatabase.h>
 #include <Protocol/LoadedImage.h>
 #include <Protocol/SimpleFileSystem.h>
+#include <Protocol/Smbios.h>
 #include <Uefi/UefiInternalFormRepresentation.h>
 #include <Library/IoLib.h>
 
@@ -10,6 +11,7 @@
 #define OMNI_EVIDENCE_FILE  L"\\OMNI-EVIDENCE.TXT"
 #define OMNI_CHALLENGE_FILE L"\\OMNI-CHALLENGE.TXT"
 #define OMNI_CHALLENGE_HEX_LEN 64
+#define OMNI_UUID_TEXT_LEN      36
 
 typedef struct {
   UINTN Handles;
@@ -72,6 +74,73 @@ STATIC VOID WriteStat (CONST CHAR8 *Name, UINTN Value) {
   WriteChar ('=');
   WriteUint (Value);
   WriteChar ('\n');
+}
+
+STATIC CHAR8 HexDigit (UINT8 Value) {
+  return (CHAR8)((Value < 10) ? ('0' + Value) : ('a' + (Value - 10)));
+}
+
+STATIC VOID FormatHex (
+  UINT64 Value,
+  UINTN  Digits,
+  CHAR8  *Buffer,
+  IN OUT UINTN *Index
+  )
+{
+  UINTN Digit;
+  UINTN Shift;
+
+  for (Digit = 0; Digit < Digits; ++Digit) {
+    Shift = (Digits - Digit - 1) * 4;
+    Buffer[(*Index)++] = HexDigit ((UINT8)((Value >> Shift) & 0x0F));
+  }
+}
+
+STATIC VOID FormatGuidAscii (
+  CONST GUID *Uuid,
+  OUT CHAR8  Text[OMNI_UUID_TEXT_LEN + 1]
+  )
+{
+  UINTN Index;
+
+  Index = 0;
+  FormatHex (Uuid->Data1, 8, Text, &Index);
+  Text[Index++] = '-';
+  FormatHex (Uuid->Data2, 4, Text, &Index);
+  Text[Index++] = '-';
+  FormatHex (Uuid->Data3, 4, Text, &Index);
+  Text[Index++] = '-';
+  FormatHex (Uuid->Data4[0], 2, Text, &Index);
+  FormatHex (Uuid->Data4[1], 2, Text, &Index);
+  Text[Index++] = '-';
+  FormatHex (Uuid->Data4[2], 2, Text, &Index);
+  FormatHex (Uuid->Data4[3], 2, Text, &Index);
+  FormatHex (Uuid->Data4[4], 2, Text, &Index);
+  FormatHex (Uuid->Data4[5], 2, Text, &Index);
+  FormatHex (Uuid->Data4[6], 2, Text, &Index);
+  FormatHex (Uuid->Data4[7], 2, Text, &Index);
+  Text[Index] = '\0';
+}
+
+STATIC BOOLEAN GuidIsMeaningful (CONST GUID *Uuid) {
+  CONST UINT8 *Bytes;
+  UINTN Index;
+  BOOLEAN AnyNonZero;
+  BOOLEAN AnyNotFf;
+
+  Bytes = (CONST UINT8 *)Uuid;
+  AnyNonZero = FALSE;
+  AnyNotFf = FALSE;
+  for (Index = 0; Index < sizeof (GUID); ++Index) {
+    if (Bytes[Index] != 0x00) {
+      AnyNonZero = TRUE;
+    }
+    if (Bytes[Index] != 0xFF) {
+      AnyNotFf = TRUE;
+    }
+  }
+
+  return (BOOLEAN)(AnyNonZero && AnyNotFf);
 }
 
 STATIC EFI_STATUS FileWriteAscii (
@@ -250,11 +319,66 @@ STATIC EFI_STATUS LoadChallenge (
   return EFI_SUCCESS;
 }
 
+STATIC EFI_STATUS LoadPlatformUuid (
+  EFI_SYSTEM_TABLE *SystemTable,
+  OUT CHAR8        PlatformUuid[OMNI_UUID_TEXT_LEN + 1]
+  )
+{
+  EFI_STATUS Status;
+  EFI_SMBIOS_PROTOCOL *Smbios;
+  EFI_SMBIOS_HANDLE Handle;
+  EFI_SMBIOS_TYPE Type;
+  EFI_SMBIOS_TABLE_HEADER *Record;
+  SMBIOS_TABLE_TYPE1 *Type1;
+
+  if ((SystemTable == NULL) || (SystemTable->BootServices == NULL) ||
+      (PlatformUuid == NULL)) {
+    return EFI_INVALID_PARAMETER;
+  }
+
+  Smbios = NULL;
+  Status = SystemTable->BootServices->LocateProtocol (
+                                      &gEfiSmbiosProtocolGuid,
+                                      NULL,
+                                      (VOID **)&Smbios
+                                      );
+  if (EFI_ERROR (Status) || (Smbios == NULL)) {
+    return EFI_NOT_FOUND;
+  }
+
+  Handle = SMBIOS_HANDLE_PI_RESERVED;
+  Type = SMBIOS_TYPE_SYSTEM_INFORMATION;
+  Record = NULL;
+  Status = Smbios->GetNext (
+                     Smbios,
+                     &Handle,
+                     &Type,
+                     &Record,
+                     NULL
+                     );
+  if (EFI_ERROR (Status) || (Record == NULL)) {
+    return EFI_NOT_FOUND;
+  }
+
+  if (Record->Length < (OFFSET_OF (SMBIOS_TABLE_TYPE1, Uuid) + sizeof (GUID))) {
+    return EFI_COMPROMISED_DATA;
+  }
+
+  Type1 = (SMBIOS_TABLE_TYPE1 *)Record;
+  if (!GuidIsMeaningful (&Type1->Uuid)) {
+    return EFI_COMPROMISED_DATA;
+  }
+
+  FormatGuidAscii (&Type1->Uuid, PlatformUuid);
+  return EFI_SUCCESS;
+}
+
 STATIC EFI_STATUS SaveEvidence (
   EFI_HANDLE          ImageHandle,
   EFI_SYSTEM_TABLE    *SystemTable,
   CONST OMNI_HII_STATS *Stats,
   CONST CHAR8          *Challenge,
+  CONST CHAR8          *PlatformUuid,
   BOOLEAN              HiiPassed,
   BOOLEAN              Passed
   )
@@ -329,6 +453,15 @@ STATIC EFI_STATUS SaveEvidence (
   if (!EFI_ERROR (Status)) Status = FileWriteAscii (File, "OMNI_CHALLENGE=");
   if (!EFI_ERROR (Status)) Status = FileWriteAscii (File, Challenge);
   if (!EFI_ERROR (Status)) Status = FileWriteAscii (File, "\n");
+  if (!EFI_ERROR (Status) && (PlatformUuid != NULL)) {
+    Status = FileWriteAscii (File, "OMNI_PLATFORM_UUID=");
+  }
+  if (!EFI_ERROR (Status) && (PlatformUuid != NULL)) {
+    Status = FileWriteAscii (File, PlatformUuid);
+  }
+  if (!EFI_ERROR (Status) && (PlatformUuid != NULL)) {
+    Status = FileWriteAscii (File, "\n");
+  }
   if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HII_HANDLES", Stats->Handles);
   if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HII_FORM_PACKAGES", Stats->FormPackages);
   if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HII_OPCODES", Stats->Opcodes);
@@ -590,10 +723,12 @@ UefiMain (
 {
   EFI_STATUS HiiStatus;
   EFI_STATUS ChallengeStatus;
+  EFI_STATUS PlatformStatus;
   EFI_STATUS EvidenceStatus;
   BOOLEAN HiiPassed;
   BOOLEAN Passed;
   CHAR8 Challenge[OMNI_CHALLENGE_HEX_LEN + 1] = {0};
+  CHAR8 PlatformUuid[OMNI_UUID_TEXT_LEN + 1] = {0};
   OMNI_HII_STATS Stats = {0};
 
   SerialInit ();
@@ -606,6 +741,15 @@ UefiMain (
     WriteText ("OMNI_CHALLENGE_PASS\n");
     WriteText ("OMNI_CHALLENGE=");
     WriteText (Challenge);
+    WriteText ("\n");
+  }
+
+  PlatformStatus = LoadPlatformUuid (SystemTable, PlatformUuid);
+  if (EFI_ERROR (PlatformStatus)) {
+    WriteText ("OMNI_PLATFORM_UUID_UNAVAILABLE\n");
+  } else {
+    WriteText ("OMNI_PLATFORM_UUID=");
+    WriteText (PlatformUuid);
     WriteText ("\n");
   }
 
@@ -635,6 +779,7 @@ UefiMain (
                      SystemTable,
                      &Stats,
                      EFI_ERROR (ChallengeStatus) ? "INVALID" : Challenge,
+                     EFI_ERROR (PlatformStatus) ? NULL : PlatformUuid,
                      HiiPassed,
                      Passed
                      );
