@@ -36,15 +36,12 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Install Frama-C 33
+      - name: Install Frama-C prerequisites
         run: |
           sudo apt-get update
           sudo apt-get install -y opam libgmp-dev graphviz patch
-          opam init --disable-sandboxing -y
-          opam switch create 5.3.0 -y
-          eval "$(opam env)"
-          opam install -y frama-c.33.0 alt-ergo
-          frama-c -version
+      - name: Install pinned Frama-C 33 and Alt-Ergo
+        run: bash scripts/install_pinned_framac.sh
       - name: Eva on implementation and contracts
         run: |
           eval "$(opam env)"
