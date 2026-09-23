@@ -20,6 +20,12 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install LLVM coverage tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm
+          llvm-profdata --version
+          llvm-cov --version
       - name: Independent LLVM coverage
         run: |
           clang -std=c11 -Wall -Wextra -Wpedantic -Werror \
@@ -52,7 +58,7 @@ jobs:
         run: |
           set -euo pipefail
           cd edk2
-
+          export PYTHON_COMMAND=python3
           make -C BaseTools
           export WORKSPACE="$PWD"
           export PACKAGES_PATH="$PWD:$GITHUB_WORKSPACE/firmware"
