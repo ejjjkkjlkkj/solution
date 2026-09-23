@@ -20,6 +20,7 @@ REQUIRED_GATES = frozenset(
         "core_semantics",
         "native_verification",
         "deep_software_verification",
+        "formal_semantic_proof",
         "ifr_parser_fuzz",
         "ci_workflow_lint",
         "reproducibility_and_provenance",

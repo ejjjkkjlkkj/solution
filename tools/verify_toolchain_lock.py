@@ -14,6 +14,11 @@ def verify(root: Path = ROOT) -> dict[str, object]:
             lock["actionlint"]["version"],
             lock["actionlint"]["linux_amd64_sha256"],
         ],
+        ".github/workflows/formal-semantic-proof.yml": [
+            f"cbmc-{lock['cbmc']['version']}",
+            lock["cbmc"]["ubuntu_24_04_deb_sha256"],
+            f"frama-c.{lock['frama_c']['version']}",
+        ],
         ".github/workflows/deep-software-ceiling.yml": [
             lock["edk2_primary"]["tag"],
             lock["edk2_primary"]["commit"],
