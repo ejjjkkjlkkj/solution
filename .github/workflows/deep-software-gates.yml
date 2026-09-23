@@ -62,7 +62,9 @@ jobs:
           test "$(git -C edk2 rev-parse HEAD)" = "2970e5699ba6267f3384ffab20f96647578aebc8"
           export WORKSPACE="$GITHUB_WORKSPACE/edk2"
           export EDK_TOOLS_PATH="$WORKSPACE/BaseTools"
+          export CONF_PATH="$WORKSPACE/Conf"
           export PYTHON_COMMAND=python3
+          mkdir -p "$CONF_PATH"
           make -C "$EDK_TOOLS_PATH"
           export PACKAGES_PATH="$WORKSPACE"
           cd "$WORKSPACE"
