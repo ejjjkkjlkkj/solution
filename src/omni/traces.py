@@ -10,6 +10,9 @@ def normalize(event):
 
 def diff(a,b):
     aa=[normalize(x) for x in a]; bb=[normalize(x) for x in b]; differences=[]
+    if not aa or not bb:
+        return {"status":"FAIL","reason":"EMPTY_TRACE","a_events":len(aa),
+                "b_events":len(bb),"differences":[]}
     for index in range(max(len(aa),len(bb))):
         left=aa[index] if index<len(aa) else None
         right=bb[index] if index<len(bb) else None
@@ -20,8 +23,12 @@ def diff(a,b):
 
 def consensus(traces):
     normalized=[[normalize(x) for x in trace] for trace in traces]
-    if not normalized:
-        return {"status":"FAIL","reason":"NO_TRACES","events":0,"disagreements":[]}
+    if len(normalized) < 2:
+        return {"status":"FAIL","reason":"INSUFFICIENT_TRACES","traces":len(normalized),
+                "events":len(normalized[0]) if normalized else 0,"disagreements":[]}
+    if any(not trace for trace in normalized):
+        return {"status":"FAIL","reason":"EMPTY_TRACE","traces":len(normalized),
+                "events":max((len(t) for t in normalized), default=0),"disagreements":[]}
     disagreements=[]; unanimous=0; count=max(len(t) for t in normalized)
     for index in range(count):
         values=[trace[index] if index<len(trace) else None for trace in normalized]
