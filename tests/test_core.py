@@ -3,7 +3,7 @@ from pathlib import Path
 from omni.semantic import SemanticModel
 from omni.flight import build, verify
 from omni.firmware import inspect
-from omni.ceiling import REQUIRED_GATES, evaluate
+from omni.ceiling import HARDWARE_ONLY_GATES, REQUIRED_GATES, evaluate, hardware_boundary
 
 class CoreTests(unittest.TestCase):
     def test_semantic_password_redaction(self):
@@ -44,5 +44,13 @@ class CoreTests(unittest.TestCase):
         result = evaluate(complete)
         self.assertEqual(result["status"], "SOFTWARE_INCOMPLETE")
         self.assertIn("uefi_sct_runtime_ovmf", result["failed"])
+
+
+    def test_hardware_boundary_contains_only_intrinsically_physical_gates(self):
+        boundary = hardware_boundary()
+        self.assertEqual(boundary["status"], "HARDWARE_ONLY")
+        self.assertEqual(set(boundary["remaining"]), set(HARDWARE_ONLY_GATES))
+        self.assertIn("physical_hda_codec_topology", HARDWARE_ONLY_GATES)
+        self.assertNotIn("qemu_record_replay", HARDWARE_ONLY_GATES)
 
 if __name__ == "__main__": unittest.main()
