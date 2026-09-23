@@ -3,7 +3,7 @@ from pathlib import Path
 from omni.semantic import SemanticModel
 from omni.flight import build, verify
 from omni.firmware import inspect
-from omni.ceiling import evaluate
+from omni.ceiling import REQUIRED_SOFTWARE_GATES, evaluate
 
 class CoreTests(unittest.TestCase):
     def test_semantic_password_redaction(self):
@@ -32,7 +32,25 @@ class CoreTests(unittest.TestCase):
             self.assertTrue(result["firmware_volumes"][0]["valid_bounds"])
 
     def test_ceiling_is_strict(self):
-        self.assertEqual(evaluate({"asan": "PASS", "cbmc": "NOT_RUN"})["status"], "SOFTWARE_INCOMPLETE")
-        self.assertEqual(evaluate({"asan": "PASS", "cbmc": "PASS"})["status"], "SOFTWARE_CEILING_PASS")
+        empty = evaluate({})
+        self.assertEqual(empty["status"], "SOFTWARE_INCOMPLETE")
+        self.assertEqual(empty["missing"], sorted(REQUIRED_SOFTWARE_GATES))
+
+        partial = evaluate({"asan": "PASS", "cbmc": "PASS"})
+        self.assertEqual(partial["status"], "SOFTWARE_INCOMPLETE")
+        self.assertIn("uefi-sct-execution", partial["blockers"])
+
+        complete = {name: "PASS" for name in REQUIRED_SOFTWARE_GATES}
+        self.assertEqual(evaluate(complete)["status"], "SOFTWARE_CEILING_PASS")
+
+        complete["cbmc"] = "NOT_RUN"
+        blocked = evaluate(complete)
+        self.assertEqual(blocked["status"], "SOFTWARE_INCOMPLETE")
+        self.assertEqual(blocked["non_pass"]["cbmc"], "NOT_RUN")
+
+        complete["cbmc"] = "pass"
+        invalid = evaluate(complete)
+        self.assertEqual(invalid["status"], "SOFTWARE_INCOMPLETE")
+        self.assertEqual(invalid["invalid"]["cbmc"], "pass")
 
 if __name__ == "__main__": unittest.main()
