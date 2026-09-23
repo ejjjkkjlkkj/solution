@@ -31,7 +31,9 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(len(result["firmware_volumes"]), 1)
             self.assertTrue(result["firmware_volumes"][0]["valid_bounds"])
 
-    def test_ceiling_is_strict(self):
+    def test_ceiling_is_fail_closed(self):
+        self.assertEqual(evaluate({})["status"], "SOFTWARE_INCOMPLETE")
+
         partial = {"core_semantics": "PASS", "native_verification": "PASS"}
         result = evaluate(partial)
         self.assertEqual(result["status"], "SOFTWARE_INCOMPLETE")
@@ -44,5 +46,22 @@ class CoreTests(unittest.TestCase):
         result = evaluate(complete)
         self.assertEqual(result["status"], "SOFTWARE_INCOMPLETE")
         self.assertIn("uefi_sct_runtime_ovmf", result["failed"])
+
+    def test_ceiling_rejects_aliases_and_injected_gates(self):
+        complete = {gate: "PASS" for gate in REQUIRED_GATES}
+        complete["core_semantics"] = "pass"
+        result = evaluate(complete)
+        self.assertEqual(result["status"], "SOFTWARE_INCOMPLETE")
+        self.assertIn("core_semantics", result["invalid"])
+
+        complete["core_semantics"] = "PASS"
+        complete["fake_gate"] = "PASS"
+        result = evaluate(complete)
+        self.assertEqual(result["status"], "SOFTWARE_INCOMPLETE")
+        self.assertIn("fake_gate", result["unexpected"])
+
+    def test_ceiling_rejects_non_string_status(self):
+        with self.assertRaises(ValueError):
+            evaluate({"core_semantics": 1})  # type: ignore[arg-type]
 
 if __name__ == "__main__": unittest.main()
