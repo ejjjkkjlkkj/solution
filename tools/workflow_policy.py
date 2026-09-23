@@ -25,16 +25,17 @@ class Violation:
 
 
 def _continued_command(lines: list[str], start: int) -> str:
-    """Return one shell command, including backslash-continued lines.
-
-    Workflow YAML is intentionally not parsed here: this policy also scans shell
-    snippets embedded in YAML.  A malformed continuation is still returned and
-    will fail the pip policy below rather than being silently accepted.
-    """
-    parts = [lines[start].strip()]
+    """Return one shell command, including backslash-continued lines."""
+    parts: list[str] = []
     cursor = start
-    while parts[-1].endswith("\\") and cursor + 1 < len(lines):
-        parts.append(lines[cursor + 1].strip())
+    while True:
+        part = lines[cursor].strip()
+        continued = part.endswith("\\")
+        if continued:
+            part = part[:-1].rstrip()
+        parts.append(part)
+        if not continued or cursor + 1 >= len(lines):
+            break
         cursor += 1
     return " ".join(parts)
 
