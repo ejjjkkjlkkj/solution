@@ -89,7 +89,8 @@ jobs:
       - name: WP/RTE proof obligations
         run: |
           eval "$(opam env)"
-          frama-c -wp -wp-rte -main omni_mm_validate -lib-entry \
+          frama-c -wp -wp-rte -wp-prover alt-ergo \
+            -main omni_mm_validate -lib-entry \
             -wp-fct omni_mm_validate,omni_a11y_validate \
             -cpp-extra-args="-Iinclude" c/omni_protocol.c 2>&1 | tee wp.log
           python - <<'PY'
