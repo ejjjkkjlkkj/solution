@@ -93,34 +93,91 @@ jobs:
           mcopy -i sct-runtime.img "$SCT_PACKAGE/SctStartup.nsh" ::/SctStartup.nsh
           printf 'verbose\n' > verbose.mode
           mcopy -i sct-runtime.img verbose.mode ::/Sct/.verbose.mode
-          printf '%s\n' \
-            'echo -off' \
-            'fs0:' \
-            'fs0:\\SctStartup.nsh' \
-            'echo OMNI_SCT_RETURNED > fs0:\\SCT-DONE.TXT' \
-            'reset -s' > startup.nsh
+
+          # Run the official SCT launcher directly as the Shell startup script.
+          # The previous wrapper attempted to invoke fs0:\\SctStartup.nsh from
+          # another script and then write a completion file from UEFI.  The
+          # runtime evidence showed both operations failing before SCT started.
+          cp "$SCT_PACKAGE/SctStartup.nsh" startup.nsh
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("startup.nsh")
+          data = path.read_bytes()
+          if b"OMNI_SCT_RETURNED" in data:
+              raise SystemExit("unexpected pre-existing completion marker")
+          if not data.endswith(b"\r\n"):
+              data = data.rstrip(b"\r\n") + b"\r\n"
+          path.write_bytes(data + b"echo OMNI_SCT_RETURNED\r\n")
+          PY
           mcopy -i sct-runtime.img startup.nsh ::/startup.nsh
+
+          # Fail closed before boot if the image does not contain the exact
+          # launcher and completion marker we expect.
+          mtype -i sct-runtime.img ::/startup.nsh > startup-from-image.nsh
+          grep -a -q 'Sct -c' startup-from-image.nsh
+          grep -a -q 'OMNI_SCT_RETURNED' startup-from-image.nsh
           mdir -i sct-runtime.img ::/
           mdir -i sct-runtime.img ::/Sct
 
       - name: Execute official SCT against pinned OVMF
         run: |
           cp OVMF_VARS.fd OVMF_SCT_VARS.fd
-          set +e
-          timeout --signal=TERM 55m "$GITHUB_WORKSPACE/qemu-system-x86_64" -L "$GITHUB_WORKSPACE/qemu-system-x86_64.data"             -machine q35,accel=tcg             -m 2048             -display none             -monitor none             -serial file:sct-serial.log             -net none             -drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.fd             -drive if=pflash,format=raw,file=OVMF_SCT_VARS.fd             -drive file=sct-runtime.img,format=raw
-          QEMU_RC=$?
-          set -e
-          echo "QEMU_RC=$QEMU_RC"
-          if [ "$QEMU_RC" -eq 124 ]; then
-            echo "SCT runtime timed out before returning to startup.nsh" >&2
+          rm -f sct-serial.log SCT-DONE.TXT
+
+          "$GITHUB_WORKSPACE/qemu-system-x86_64" \
+            -L "$GITHUB_WORKSPACE/qemu-system-x86_64.data" \
+            -machine q35,accel=tcg \
+            -m 2048 \
+            -display none \
+            -monitor none \
+            -serial file:sct-serial.log \
+            -net none \
+            -drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.fd \
+            -drive if=pflash,format=raw,file=OVMF_SCT_VARS.fd \
+            -drive file=sct-runtime.img,format=raw &
+          QEMU_PID=$!
+
+          cleanup_qemu() {
+            if kill -0 "$QEMU_PID" 2>/dev/null; then
+              kill -TERM "$QEMU_PID" 2>/dev/null || true
+              wait "$QEMU_PID" 2>/dev/null || true
+            fi
+          }
+          trap cleanup_qemu EXIT
+
+          deadline=$((SECONDS + 3300))
+          marker_seen=0
+          while kill -0 "$QEMU_PID" 2>/dev/null; do
+            if test -f sct-serial.log && grep -a -q 'OMNI_SCT_RETURNED' sct-serial.log; then
+              marker_seen=1
+              break
+            fi
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "SCT runtime timed out before the official launcher returned" >&2
+              tail -200 sct-serial.log >&2 || true
+              exit 1
+            fi
+            sleep 5
+          done
+
+          if [ "$marker_seen" -ne 1 ]; then
+            set +e
+            wait "$QEMU_PID"
+            QEMU_RC=$?
+            set -e
+            echo "QEMU exited before the SCT completion marker: $QEMU_RC" >&2
+            tail -200 sct-serial.log >&2 || true
             exit 1
           fi
-          if [ "$QEMU_RC" -ne 0 ]; then
-            echo "SCT QEMU exited abnormally: $QEMU_RC" >&2
-            exit 1
-          fi
-          mcopy -i sct-runtime.img ::/SCT-DONE.TXT SCT-DONE.TXT
-          grep -a 'OMNI_SCT_RETURNED' SCT-DONE.TXT
+
+          echo "SCT completion marker observed on serial output"
+          grep -a 'OMNI_SCT_RETURNED' sct-serial.log
+          printf 'OMNI_SCT_RETURNED\n' > SCT-DONE.TXT
+
+          # Stop the emulator only after the official SCT launcher has returned.
+          cleanup_qemu
+          trap - EXIT
 
       - name: Extract and strictly analyze SCT results
         run: |
