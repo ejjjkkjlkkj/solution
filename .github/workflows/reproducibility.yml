@@ -69,7 +69,7 @@ jobs:
           test "$(git -C edk2 rev-parse HEAD)" = "$EDK2_SHA"
       - name: Deterministic OmniProbe EFI build A
         run: |
-          python3 -m pip install --upgrade -r edk2/pip-requirements.txt
+
           make -C edk2/BaseTools
           export WORKSPACE="$GITHUB_WORKSPACE/edk2"
           export PACKAGES_PATH="$WORKSPACE:$GITHUB_WORKSPACE/firmware"
@@ -103,7 +103,7 @@ jobs:
           test "$(git -C edk2 rev-parse HEAD)" = "$EDK2_SHA"
       - name: Deterministic OmniProbe EFI build B
         run: |
-          python3 -m pip install --upgrade -r edk2/pip-requirements.txt
+
           make -C edk2/BaseTools
           export WORKSPACE="$GITHUB_WORKSPACE/edk2"
           export PACKAGES_PATH="$WORKSPACE:$GITHUB_WORKSPACE/firmware"
