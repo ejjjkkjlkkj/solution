@@ -66,6 +66,7 @@ jobs:
           export WORKSPACE="$PWD"
 
           export EDK_TOOLS_PATH="$WORKSPACE/BaseTools"
+          export CONF_PATH="$WORKSPACE/Conf"
           export PYTHON_COMMAND=python3
           source edksetup.sh BaseTools
           build -a X64 -t GCC -b RELEASE -p OvmfPkg/OvmfPkgX64.dsc

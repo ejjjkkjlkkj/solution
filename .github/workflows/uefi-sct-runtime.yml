@@ -60,6 +60,7 @@ jobs:
           export WORKSPACE="$GITHUB_WORKSPACE/edk2"
 
           export EDK_TOOLS_PATH="$WORKSPACE/BaseTools"
+          export CONF_PATH="$WORKSPACE/Conf"
           export PACKAGES_PATH="$WORKSPACE:$GITHUB_WORKSPACE/SctPkg"
           cd edk2
           export PYTHON_COMMAND=python3
