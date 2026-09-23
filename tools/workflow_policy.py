@@ -13,7 +13,7 @@ CONTINUE_RE = re.compile(r"^\s*continue-on-error:\s*true\s*(?:#.*)?$", re.IGNORE
 COMMIT_REF_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 DOCKER_DIGEST_RE = re.compile(r"^docker://.+@sha256:[0-9a-fA-F]{64}$")
 MUTABLE_RUNNER_RE = re.compile(r"(?:ubuntu|windows|macos)-latest", re.IGNORECASE)
-PIP_INSTALL_RE = re.compile(r"\bpip(?:3)?\s+install\b", re.IGNORECASE)
+PIP_COMMAND_RE = re.compile(r"^pip(?:3)?$", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -40,13 +40,31 @@ def _continued_command(lines: list[str], start: int) -> str:
     return " ".join(parts)
 
 
+def _shell_tokens(command: str) -> list[str] | None:
+    try:
+        return shlex.split(command, comments=True, posix=True)
+    except ValueError:
+        return None
+
+
+def _contains_pip_install(command: str) -> bool:
+    """Detect actual pip install arguments while ignoring shell comments."""
+    tokens = _shell_tokens(command)
+    if tokens is None:
+        # A malformed command must not evade the policy.  The caller will report
+        # it as an un-hashed install if the textual command contains the phrase.
+        return bool(re.search(r"\bpip(?:3)?\s+install\b", command, re.IGNORECASE))
+    return any(
+        PIP_COMMAND_RE.fullmatch(token) and index + 1 < len(tokens)
+        and tokens[index + 1].lower() == "install"
+        for index, token in enumerate(tokens)
+    )
+
+
 def _has_require_hashes(command: str) -> bool:
     """Recognize --require-hashes as a shell argument, not as a comment."""
-    try:
-        tokens = shlex.split(command, comments=True, posix=True)
-    except ValueError:
-        return False
-    return "--require-hashes" in tokens
+    tokens = _shell_tokens(command)
+    return tokens is not None and "--require-hashes" in tokens
 
 
 def inspect_file(path: pathlib.Path) -> list[Violation]:
@@ -59,12 +77,11 @@ def inspect_file(path: pathlib.Path) -> list[Violation]:
         if MUTABLE_RUNNER_RE.search(raw):
             violations.append(Violation(str(path), number, "MUTABLE_RUNNER_LABEL", raw.strip()))
 
-        if PIP_INSTALL_RE.search(raw):
-            command = _continued_command(lines, index)
-            if not _has_require_hashes(command):
-                violations.append(
-                    Violation(str(path), number, "PIP_INSTALL_WITHOUT_HASHES", command)
-                )
+        command = _continued_command(lines, index)
+        if _contains_pip_install(command) and not _has_require_hashes(command):
+            violations.append(
+                Violation(str(path), number, "PIP_INSTALL_WITHOUT_HASHES", command)
+            )
 
         match = USES_RE.match(raw)
         if not match:
