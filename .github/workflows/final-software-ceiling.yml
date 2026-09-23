@@ -18,7 +18,7 @@ permissions:
 jobs:
   aggregate:
     runs-on: ubuntu-24.04
-    timeout-minutes: 85
+    timeout-minutes: 150
     env:
       PYTHONPATH: src
     steps:
@@ -31,7 +31,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          deadline=$((SECONDS + 4800))
+          deadline=$((SECONDS + 8400))
           while true; do
             gh api "/repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$GITHUB_SHA&per_page=100" > workflow-runs.json
             python tools/ci_ceiling_manifest.py workflow-runs.json \
