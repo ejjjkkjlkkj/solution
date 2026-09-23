@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install toolchain
         run: |
@@ -83,7 +83,7 @@ jobs:
           sha256sum OmniProbe.efi omni-challenge.txt omni-fat.img omni-gpt.img omni-boot.vmdk OVMF_CODE.fd OVMF_VARS.fd > SHA256SUMS.txt
           sha256sum -c SHA256SUMS.txt
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: omni-uefi-hil
           path: |
@@ -104,9 +104,9 @@ jobs:
       run:
         shell: pwsh
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: omni-uefi-hil
           path: hil
@@ -199,6 +199,8 @@ jobs:
           $code = (Resolve-Path "hil\OVMF_CODE.fd").Path
           $vars = (Resolve-Path "qemu-vars.fd").Path
           $disk = (Resolve-Path "hil\omni-fat.img").Path
+          $expectedChallenge = (Get-Content "hil\omni-challenge.txt" -Raw).Trim().ToLowerInvariant()
+          if ($expectedChallenge -notmatch "^[0-9a-f]{64}$") { throw "Invalid HIL challenge artifact" }
 
           $args = @(
             "-machine","q35,accel=tcg",
@@ -227,6 +229,9 @@ jobs:
           foreach ($marker in @("OMNI_CHALLENGE_PASS","OMNI_HII_PASS","OMNI_EVIDENCE_PASS","OMNI_UEFI_PASS")) {
             if ($joined -notmatch [regex]::Escape($marker)) { throw "Missing QEMU proof marker: $marker" }
           }
+          if ($joined -notmatch [regex]::Escape("OMNI_CHALLENGE=$expectedChallenge")) {
+            throw "QEMU challenge does not match this commit"
+          }
           if ($joined -match "OMNI_(CHALLENGE|HII|EVIDENCE|UEFI)_FAIL") { throw "QEMU emitted failure marker" }
           '@ | Set-Content $script -Encoding utf8
 
@@ -248,6 +253,8 @@ jobs:
           )
           $vmrun = $vmrunCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
           if (-not $vmrun) { throw "vmrun.exe not found" }
+          $expectedChallenge = (Get-Content "hil\omni-challenge.txt" -Raw).Trim().ToLowerInvariant()
+          if ($expectedChallenge -notmatch "^[0-9a-f]{64}$") { throw "Invalid HIL challenge artifact" }
 
           Remove-Item vmware-hil -Recurse -Force -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force vmware-hil | Out-Null
@@ -287,7 +294,9 @@ jobs:
               $serialText = Get-Content vmware-hil\serial.log -Raw -ErrorAction SilentlyContinue
               $all = @("OMNI_CHALLENGE_PASS","OMNI_HII_PASS","OMNI_EVIDENCE_PASS","OMNI_UEFI_PASS") |
                 ForEach-Object { $serialText -match [regex]::Escape($_) }
-              if (($all -notcontains $false) -and ($serialText -notmatch "OMNI_(CHALLENGE|HII|EVIDENCE|UEFI)_FAIL")) {
+              if (($all -notcontains $false) -and
+                  ($serialText -match [regex]::Escape("OMNI_CHALLENGE=$expectedChallenge")) -and
+                  ($serialText -notmatch "OMNI_(CHALLENGE|HII|EVIDENCE|UEFI)_FAIL")) {
                 $passed = $true
                 break
               }
@@ -315,7 +324,7 @@ jobs:
               }
             } | ConvertTo-Json -Depth 4 | Set-Content physical-evidence-manifest.json -Encoding utf8
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: physical-amd-hil-evidence
