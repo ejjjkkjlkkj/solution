@@ -11,3 +11,13 @@
 Merkle verification treats manifests as untrusted input. Relative paths must be canonical, traversal is rejected, symlink resolution must stay inside the declared evidence root, and digest fields must be well-formed before comparison.
 
 The project never treats SYSTEM, Ring 0, SMM or a security processor as one universal privilege hierarchy. They are separate trust domains and are modeled separately.
+
+
+## Firmware-volume inspection
+
+Finding the four-byte `_FVH` signature is discovery only, not validation. A
+firmware volume is reported as `valid_header: true` only when its declared
+volume/header bounds are contained in the image, the header length is 16-bit
+aligned, the PI firmware-volume 16-bit header checksum sums to zero, the block
+map contains its terminating zero entry, and a non-zero extended-header offset
+is contained inside the volume. Inspection remains read-only.
