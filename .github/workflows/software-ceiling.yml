@@ -1,8 +1,14 @@
 name: Software Ceiling
 on:
   push:
-  pull_request:
   workflow_dispatch:
+
+concurrency:
+  group: software-ceiling-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   core:
@@ -28,3 +34,10 @@ jobs:
         with:
           python-version: "3.13"
       - run: python -m compileall -q src tests
+
+  workflow-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Reject movable Actions and fail-open jobs
+        run: python tools/workflow_policy.py .github/workflows --strict

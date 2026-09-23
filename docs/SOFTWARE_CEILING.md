@@ -45,3 +45,7 @@ Only after all applicable software gates are PASS may remaining uncertainty be a
 - other electrical/OEM-specific behavior
 
 NOT_RUN, SKIP, timeout, missing marker, stale/mismatched physical challenge, missing artifact or unverified provenance must never become PASS.
+
+## Immutable GitHub Actions
+
+Every external GitHub Action is pinned to a 40-hex commit SHA. Local actions are allowed; Docker actions must use a SHA-256 image digest. The mandatory workflow-policy gate rejects movable tags and `continue-on-error: true`, preventing later edits from silently weakening the software ceiling.

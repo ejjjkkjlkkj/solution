@@ -1,8 +1,14 @@
 name: Native Verification
 on:
   push:
-  pull_request:
   workflow_dispatch:
+
+concurrency:
+  group: native-verification-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   sanitizers:
