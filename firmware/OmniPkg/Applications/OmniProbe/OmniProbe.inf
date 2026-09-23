@@ -3,7 +3,7 @@
   BASE_NAME                      = OmniProbe
   FILE_GUID                      = 22C5A0A2-75A0-4DF6-958C-8714374AA003
   MODULE_TYPE                    = UEFI_APPLICATION
-  VERSION_STRING                 = 0.2
+  VERSION_STRING                 = 0.3
   ENTRY_POINT                    = UefiMain
 
 [Sources]
@@ -19,3 +19,5 @@
 
 [Protocols]
   gEfiHiiDatabaseProtocolGuid
+  gEfiLoadedImageProtocolGuid
+  gEfiSimpleFileSystemProtocolGuid
