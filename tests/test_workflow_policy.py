@@ -60,8 +60,20 @@ class WorkflowPolicyTests(unittest.TestCase):
             with self.subTest(command=command):
                 violations = self.scan(f"steps:\n  - run: {command}\n")
                 self.assertTrue(
-                    any(v.code == "MUTABLE_PIP_INSTALL" for v in violations)
+                    any(v.code == "PIP_INSTALL_WITHOUT_HASHES" for v in violations)
                 )
+
+    def test_split_mutable_pip_install_is_rejected(self):
+        workflow = """steps:
+  - run: |
+      python -m pip install \\
+        --upgrade \\
+        -r requirements.txt
+"""
+        violations = self.scan(workflow)
+        self.assertTrue(
+            any(v.code == "PIP_INSTALL_WITHOUT_HASHES" for v in violations)
+        )
 
     def test_hash_locked_multiline_pip_install_is_allowed(self):
         workflow = """steps:
