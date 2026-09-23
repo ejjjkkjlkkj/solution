@@ -106,23 +106,17 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Install pinned Frama-C 33
+      - name: Install Frama-C/Alt-Ergo from pinned OPAM repository state
         run: |
           sudo apt-get update
           sudo apt-get install -y opam libgmp-dev graphviz patch
-          opam init --disable-sandboxing -y
-          opam switch create 5.3.0 -y
-          eval "$(opam env)"
-          opam install -y frama-c.33.0
-          frama-c -version
+          bash scripts/install_pinned_framac.sh
       - name: Eva value analysis
         run: |
-          eval "$(opam env)"
           frama-c -eva -eva-precision 3 -cpp-extra-args="-Iinclude" c/omni_protocol.c
       - name: WP/RTE must prove every generated goal
         run: |
-          eval "$(opam env)"
-          frama-c -wp -wp-rte -cpp-extra-args="-Iinclude" c/omni_protocol.c 2>&1 | tee wp.log
+          frama-c -wp -wp-rte -wp-prover alt-ergo -cpp-extra-args="-Iinclude" c/omni_protocol.c 2>&1 | tee wp.log
           python - <<'PY'
           import re
           text=open("wp.log", encoding="utf-8").read()
