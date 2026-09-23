@@ -17,6 +17,10 @@ STAT_KEYS = {
 }
 MARKERS = {"OMNI_EVIDENCE_V2", "OMNI_HII_PASS", "OMNI_UEFI_PASS"}
 SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
+UUID_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
 
 
 class EvidenceError(ValueError):
@@ -31,10 +35,13 @@ def sha256_file(path: pathlib.Path) -> str:
     return h.hexdigest()
 
 
-def parse_evidence(text: str) -> tuple[set[str], dict[str, int], str]:
+def parse_evidence(
+    text: str,
+) -> tuple[set[str], dict[str, int], str, str | None]:
     markers: set[str] = set()
     stats: dict[str, int] = {}
     challenge: str | None = None
+    platform_uuid: str | None = None
 
     for raw in text.splitlines():
         line = raw.strip()
@@ -59,6 +66,20 @@ def parse_evidence(text: str) -> tuple[set[str], dict[str, int], str]:
             if not SHA256_RE.fullmatch(value):
                 raise EvidenceError("invalid challenge format")
             challenge = value.lower()
+            continue
+
+        if key == "OMNI_PLATFORM_UUID":
+            if platform_uuid is not None:
+                raise EvidenceError("duplicate platform UUID")
+            if not UUID_RE.fullmatch(value):
+                raise EvidenceError("invalid platform UUID format")
+            normalized = value.lower()
+            if normalized in {
+                "00000000-0000-0000-0000-000000000000",
+                "ffffffff-ffff-ffff-ffff-ffffffffffff",
+            }:
+                raise EvidenceError("non-meaningful platform UUID")
+            platform_uuid = normalized
             continue
 
         if key not in STAT_KEYS:
@@ -86,7 +107,7 @@ def parse_evidence(text: str) -> tuple[set[str], dict[str, int], str]:
     if stats["OMNI_HII_INVALID"] != 0:
         raise EvidenceError("invalid HII package observed")
 
-    return markers, stats, challenge
+    return markers, stats, challenge, platform_uuid
 
 
 def verify(
@@ -94,23 +115,41 @@ def verify(
     efi_path: pathlib.Path,
     expected_sha256: str,
     expected_challenge: str,
+    expected_platform_uuid: str | None = None,
 ) -> dict[str, object]:
     if not SHA256_RE.fullmatch(expected_sha256):
         raise EvidenceError("expected SHA-256 must be 64 hexadecimal characters")
     if not SHA256_RE.fullmatch(expected_challenge):
         raise EvidenceError("expected challenge must be 64 hexadecimal characters")
+    if expected_platform_uuid is not None:
+        if not UUID_RE.fullmatch(expected_platform_uuid):
+            raise EvidenceError("expected platform UUID has invalid format")
+        expected_platform_uuid = expected_platform_uuid.lower()
+        if expected_platform_uuid in {
+            "00000000-0000-0000-0000-000000000000",
+            "ffffffff-ffff-ffff-ffff-ffffffffffff",
+        }:
+            raise EvidenceError("expected platform UUID is not meaningful")
 
     try:
         text = evidence_path.read_text(encoding="ascii")
     except UnicodeDecodeError as exc:
         raise EvidenceError("evidence is not ASCII") from exc
 
-    _, stats, challenge = parse_evidence(text)
+    _, stats, challenge, platform_uuid = parse_evidence(text)
     expected_challenge = expected_challenge.lower()
     if challenge != expected_challenge:
         raise EvidenceError(
             f"challenge mismatch: actual={challenge} expected={expected_challenge}"
         )
+    if expected_platform_uuid is not None:
+        if platform_uuid is None:
+            raise EvidenceError("platform UUID missing from evidence")
+        if platform_uuid != expected_platform_uuid:
+            raise EvidenceError(
+                "platform UUID mismatch: "
+                f"actual={platform_uuid} expected={expected_platform_uuid}"
+            )
 
     actual = sha256_file(efi_path)
     expected_sha256 = expected_sha256.lower()
@@ -123,6 +162,7 @@ def verify(
         "status": "PHYSICAL_EVIDENCE_SOFTWARE_VERIFY_PASS",
         "efi_sha256": actual,
         "challenge": challenge,
+        "platform_uuid": platform_uuid,
         "stats": stats,
     }
 
@@ -135,6 +175,10 @@ def main() -> int:
     ap.add_argument("--efi", required=True, type=pathlib.Path)
     ap.add_argument("--expected-sha256", required=True)
     ap.add_argument("--expected-challenge", required=True)
+    ap.add_argument(
+        "--expected-platform-uuid",
+        help="require SMBIOS Type 1 UUID to match the physical target",
+    )
     ns = ap.parse_args()
     try:
         result = verify(
@@ -142,6 +186,7 @@ def main() -> int:
             ns.efi,
             ns.expected_sha256,
             ns.expected_challenge,
+            ns.expected_platform_uuid,
         )
     except (OSError, EvidenceError) as exc:
         print(json.dumps({"status": "FAIL", "error": str(exc)}, sort_keys=True))
