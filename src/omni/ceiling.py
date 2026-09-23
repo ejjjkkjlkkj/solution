@@ -21,6 +21,8 @@ REQUIRED_SOFTWARE_GATES = frozenset(
         "deep_regression_gates",
         "independent_verification",
         "formal_semantic_proof",
+        "ifr_parser_fuzz",
+        "ci_workflow_lint",
         "reproducibility_and_provenance",
         "uefi_sct_build",
         "uefi_sct_runtime_ovmf",
