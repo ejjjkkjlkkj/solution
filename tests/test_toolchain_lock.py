@@ -57,5 +57,61 @@ class ToolchainLockTests(unittest.TestCase):
             self.assertTrue(result["invalid"], result)
 
 
+    def test_comment_cannot_mask_qemu_hash_drift(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp) / "repo"
+            shutil.copytree(
+                ROOT,
+                work,
+                ignore=shutil.ignore_patterns(".git", "__pycache__", ".pytest_cache"),
+            )
+            lock = json.loads((work / "toolchains.lock.json").read_text(encoding="utf-8"))
+            expected = lock["qemu"]["tarball_sha256"]
+            script = work / "scripts" / "build_pinned_qemu.sh"
+            text = script.read_text(encoding="utf-8")
+            replacement = 'QEMU_TARBALL_SHA256="' + ("0" * 64) + '"'
+            text = text.replace(f'QEMU_TARBALL_SHA256="{expected}"', replacement)
+            text += f"\n# stale expected hash must not satisfy the verifier: {expected}\n"
+            script.write_text(text, encoding="utf-8")
+
+            result = verify(work)
+            self.assertEqual(result["status"], "FAIL")
+            self.assertTrue(
+                any(
+                    item["file"] == "scripts/build_pinned_qemu.sh"
+                    and "QEMU_TARBALL_SHA256" in item["value"]
+                    for item in result["missing"]
+                ),
+                result,
+            )
+
+    def test_unrelated_value_cannot_mask_contextual_edk2_drift(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp) / "repo"
+            shutil.copytree(
+                ROOT,
+                work,
+                ignore=shutil.ignore_patterns(".git", "__pycache__", ".pytest_cache"),
+            )
+            lock = json.loads((work / "toolchains.lock.json").read_text(encoding="utf-8"))
+            expected = lock["edk2_primary"]["commit"]
+            workflow = work / ".github" / "workflows" / "reproducibility.yml"
+            text = workflow.read_text(encoding="utf-8")
+            text = text.replace(f"EDK2_SHA: {expected}", "EDK2_SHA: " + ("0" * 40))
+            text += f"\n# stale expected commit must not satisfy the verifier: {expected}\n"
+            workflow.write_text(text, encoding="utf-8")
+
+            result = verify(work)
+            self.assertEqual(result["status"], "FAIL")
+            self.assertTrue(
+                any(
+                    item["file"] == ".github/workflows/reproducibility.yml"
+                    and item["value"] == f"EDK2_SHA: {expected}"
+                    for item in result["missing"]
+                ),
+                result,
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

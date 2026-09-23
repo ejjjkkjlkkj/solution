@@ -59,12 +59,42 @@ def _validate_lock(lock: dict[str, Any]) -> list[dict[str, str]]:
     return invalid
 
 
+def _strip_unquoted_comment(line: str) -> str:
+    quote: str | None = None
+    escaped = False
+    for index, char in enumerate(line):
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\" and quote == '"':
+            escaped = True
+            continue
+        if char in {"'", '"'}:
+            if quote is None:
+                quote = char
+            elif quote == char:
+                quote = None
+            continue
+        if char == "#" and quote is None:
+            return line[:index]
+    return line
+
+
+def _active_text(text: str) -> str:
+    lines = []
+    for raw in text.splitlines():
+        active = _strip_unquoted_comment(raw).strip()
+        if active:
+            lines.append(active)
+    return "\n".join(lines)
+
+
 def verify(root: Path = ROOT) -> dict[str, object]:
     try:
         raw = json.loads((root / "toolchains.lock.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         return {
-            "schema": "omniexec.toolchain-lock-verification.v3",
+            "schema": "omniexec.toolchain-lock-verification.v4",
             "status": "FAIL",
             "missing": [],
             "invalid": [{"field": "toolchains.lock.json", "value": str(exc)}],
@@ -72,7 +102,7 @@ def verify(root: Path = ROOT) -> dict[str, object]:
         }
     if not isinstance(raw, dict):
         return {
-            "schema": "omniexec.toolchain-lock-verification.v3",
+            "schema": "omniexec.toolchain-lock-verification.v4",
             "status": "FAIL",
             "missing": [],
             "invalid": [{"field": "toolchains.lock.json", "value": "root must be an object"}],
@@ -82,58 +112,69 @@ def verify(root: Path = ROOT) -> dict[str, object]:
     invalid = _validate_lock(lock)
     if invalid:
         return {
-            "schema": "omniexec.toolchain-lock-verification.v3",
+            "schema": "omniexec.toolchain-lock-verification.v4",
             "status": "FAIL",
             "missing": [],
             "invalid": invalid,
             "checked_files": [],
         }
 
+    primary_tag = _string(lock, "edk2_primary", "tag")
+    primary_commit = _string(lock, "edk2_primary", "commit")
+    sct_edk2_tag = _string(lock, "sct", "edk2_tag")
+    sct_edk2_commit = _string(lock, "sct", "edk2_commit")
+    sct_tag = _string(lock, "sct", "tag")
+    sct_commit = _string(lock, "sct", "commit")
+    cbmc_version = _string(lock, "cbmc", "version")
+    cbmc_hash = _string(lock, "cbmc", "ubuntu_24_04_deb_sha256")
+    actionlint_version = _string(lock, "actionlint", "version")
+    actionlint_hash = _string(lock, "actionlint", "linux_amd64_sha256")
+
     checks: dict[str, list[str]] = {
         ".github/workflows/workflow-lint.yml": [
-            _string(lock, "actionlint", "version"),
-            _string(lock, "actionlint", "linux_amd64_sha256"),
+            f"https://github.com/rhysd/actionlint/releases/download/v{actionlint_version}/actionlint_{actionlint_version}_linux_amd64.tar.gz",
+            f"{actionlint_hash}  actionlint.tar.gz",
         ],
         ".github/workflows/formal-semantic-proof.yml": [
-            f"cbmc-{_string(lock, 'cbmc', 'version')}",
-            _string(lock, "cbmc", "ubuntu_24_04_deb_sha256"),
-            "scripts/install_pinned_framac.sh",
+            f"gh release download cbmc-{cbmc_version}",
+            f"{cbmc_hash}  ubuntu-24.04-cbmc-{cbmc_version}-Linux.deb",
+            "run: bash scripts/install_pinned_framac.sh",
         ],
         ".github/workflows/deep-software-ceiling.yml": [
-            _string(lock, "edk2_primary", "tag"),
-            _string(lock, "edk2_primary", "commit"),
-            f"cbmc-{_string(lock, 'cbmc', 'version')}",
-            _string(lock, "cbmc", "ubuntu_24_04_deb_sha256"),
-            "scripts/install_pinned_framac.sh",
-            "scripts/build_pinned_qemu.sh",
+            f"git clone --depth 1 --branch {primary_tag} --recurse-submodules https://github.com/tianocore/edk2.git",
+            f'test "$(git -C edk2 rev-parse HEAD)" = "{primary_commit}"',
+            f"gh release download cbmc-{cbmc_version}",
+            f"{cbmc_hash}  ubuntu-24.04-cbmc-{cbmc_version}-Linux.deb",
+            "run: bash scripts/install_pinned_framac.sh",
+            "run: bash scripts/build_pinned_qemu.sh",
         ],
         ".github/workflows/reproducibility.yml": [
-            _string(lock, "edk2_primary", "tag"),
-            _string(lock, "edk2_primary", "commit"),
+            f"EDK2_TAG: {primary_tag}",
+            f"EDK2_SHA: {primary_commit}",
         ],
         ".github/workflows/hardware-hil.yml": [
-            _string(lock, "edk2_primary", "tag"),
-            _string(lock, "edk2_primary", "commit"),
-            "scripts/build_pinned_qemu.sh",
+            f"git clone --depth 1 --branch {primary_tag} --recurse-submodules https://github.com/tianocore/edk2.git",
+            f'test "$(git -C edk2 rev-parse HEAD)" = "{primary_commit}"',
+            "bash scripts/build_pinned_qemu.sh",
         ],
         ".github/workflows/uefi-sct-build.yml": [
-            _string(lock, "sct", "edk2_tag"),
-            _string(lock, "sct", "edk2_commit"),
-            _string(lock, "sct", "tag"),
-            _string(lock, "sct", "commit"),
+            f"git clone --depth 1 --branch {sct_edk2_tag} --recurse-submodules https://github.com/tianocore/edk2.git",
+            f'test "$(git -C edk2 rev-parse HEAD)" = "{sct_edk2_commit}"',
+            f"git clone --depth 1 --branch {sct_tag} https://github.com/tianocore/edk2-test.git",
+            f'test "$(git -C edk2-test rev-parse HEAD)" = "{sct_commit}"',
         ],
         ".github/workflows/uefi-sct-runtime.yml": [
-            _string(lock, "sct", "edk2_tag"),
-            _string(lock, "sct", "edk2_commit"),
-            _string(lock, "sct", "tag"),
-            _string(lock, "sct", "commit"),
-            "scripts/build_pinned_qemu.sh",
+            f"EDK2_TAG: {sct_edk2_tag}",
+            f"EDK2_SHA: {sct_edk2_commit}",
+            f"SCT_TAG: {sct_tag}",
+            f"SCT_SHA: {sct_commit}",
+            "run: bash scripts/build_pinned_qemu.sh",
         ],
         "scripts/install_pinned_framac.sh": [
-            _string(lock, "formal", "opam_repository_sha"),
-            _string(lock, "formal", "ocaml_package"),
-            _string(lock, "formal", "frama_c_package"),
-            _string(lock, "formal", "alt_ergo_package"),
+            f'OPAM_REPOSITORY_SHA="{_string(lock, "formal", "opam_repository_sha")}"',
+            f'OCAML_PACKAGE="{_string(lock, "formal", "ocaml_package")}"',
+            f'FRAMAC_PACKAGE="{_string(lock, "formal", "frama_c_package")}"',
+            f'ALT_ERGO_PACKAGE="{_string(lock, "formal", "alt_ergo_package")}"',
         ],
         "scripts/build_pinned_qemu.sh": [
             f'QEMU_VERSION="{_string(lock, "qemu", "version")}"',
@@ -148,13 +189,13 @@ def verify(root: Path = ROOT) -> dict[str, object]:
         if not path.is_file():
             missing.append({"file": relative, "value": "<file missing>"})
             continue
-        text = path.read_text(encoding="utf-8")
+        active = _active_text(path.read_text(encoding="utf-8"))
         for needle in needles:
-            if needle not in text:
+            if needle not in active:
                 missing.append({"file": relative, "value": needle})
 
     return {
-        "schema": "omniexec.toolchain-lock-verification.v3",
+        "schema": "omniexec.toolchain-lock-verification.v4",
         "status": "PASS" if not missing else "FAIL",
         "missing": missing,
         "invalid": [],

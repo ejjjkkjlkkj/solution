@@ -51,7 +51,7 @@ def main() -> int:
     if args.command == "hardware-boundary":
         result = ceiling.evaluate_hardware(_load_manifest(args.manifest, "hardware boundary"))
         print(json.dumps(result, indent=2, sort_keys=True))
-        return 0
+        return 0 if result["status"] == "HARDWARE_BOUNDARY_PASS" else 1
     return 2
 
 
