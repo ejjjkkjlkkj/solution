@@ -2,8 +2,11 @@ name: Deep Software Gates
 
 on:
   push:
-  pull_request:
   workflow_dispatch:
+
+concurrency:
+  group: deep-software-gates-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
