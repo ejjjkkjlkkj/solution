@@ -61,12 +61,14 @@ def manifest_bytes(members: list[tuple[str, bytes]]) -> bytes:
             for name, data in members
         ],
     }
-    return (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+    return (
+        json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n"
+    ).encode("utf-8")
 
 
 def zip_info(name: str) -> zipfile.ZipInfo:
     info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
-    info.compress_type = zipfile.ZIP_DEFLATED
+    info.compress_type = zipfile.ZIP_STORED
     info.create_system = 3
     info.external_attr = (0o100644 & 0xFFFF) << 16
     return info
@@ -81,22 +83,19 @@ def create_bundle(root: pathlib.Path, output: pathlib.Path) -> str:
     with zipfile.ZipFile(
         output,
         "w",
-        compression=zipfile.ZIP_DEFLATED,
-        compresslevel=9,
+        compression=zipfile.ZIP_STORED,
         allowZip64=True,
     ) as archive:
         for name, data in members:
             archive.writestr(
                 zip_info(name),
                 data,
-                compress_type=zipfile.ZIP_DEFLATED,
-                compresslevel=9,
+                compress_type=zipfile.ZIP_STORED,
             )
         archive.writestr(
             zip_info(MANIFEST_NAME),
             manifest,
-            compress_type=zipfile.ZIP_DEFLATED,
-            compresslevel=9,
+            compress_type=zipfile.ZIP_STORED,
         )
 
     return hashlib.sha256(output.read_bytes()).hexdigest().upper()
