@@ -45,7 +45,7 @@ def verify_bundle_commit(
 
     try:
         tree_raw = _git(root, "ls-tree", "-r", "-z", "--full-tree", commit)
-        tracked: dict[str, str] = {}
+        tracked: dict[str, tuple[str, int]] = {}
         for record in (item for item in tree_raw.split(b"\0") if item):
             meta, path_raw = record.split(b"\t", 1)
             mode_raw, kind_raw, object_raw = meta.split(b" ", 2)
@@ -56,7 +56,7 @@ def verify_bundle_commit(
             if kind != "blob" or mode not in {"100644", "100755"}:
                 failures.append(f"UNSUPPORTED_TREE_ENTRY:{name}")
                 continue
-            tracked[name] = object_sha
+            tracked[name] = (object_sha, int(mode, 8))
 
         with zipfile.ZipFile(bundle, "r") as archive:
             names = archive.namelist()
@@ -101,7 +101,11 @@ def verify_bundle_commit(
                 except KeyError:
                     failures.append(f"ARCHIVE_MEMBER_MISSING:{name}")
                     continue
-                committed = _git(root, "cat-file", "blob", tracked[name])
+                object_sha, expected_mode = tracked[name]
+                committed = _git(root, "cat-file", "blob", object_sha)
+                actual_mode = (archive.getinfo(name).external_attr >> 16) & 0xFFFF
+                if actual_mode != expected_mode:
+                    failures.append(f"COMMIT_MODE_MISMATCH:{name}")
                 actual_digest = hashlib.sha256(archived).hexdigest()
                 committed_digest = hashlib.sha256(committed).hexdigest()
                 if archived != committed:
