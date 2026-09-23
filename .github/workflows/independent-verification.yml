@@ -20,15 +20,19 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Install LLVM coverage tools
+      - name: Install matching LLVM 18 coverage tools
         run: |
+          set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y llvm
-          llvm-profdata --version
-          llvm-cov --version
+          sudo apt-get install -y clang-18 llvm-18
+          test -x /usr/bin/clang-18
+          test -x /usr/lib/llvm-18/bin/llvm-profdata
+          test -x /usr/lib/llvm-18/bin/llvm-cov
       - name: Independent LLVM coverage
         run: |
-          clang -std=c11 -Wall -Wextra -Wpedantic -Werror \
+          set -euo pipefail
+          export PATH="/usr/lib/llvm-18/bin:$PATH"
+          clang-18 -std=c11 -Wall -Wextra -Wpedantic -Werror \
             -fprofile-instr-generate -fcoverage-mapping \
             -Iinclude c/omni_protocol.c tests/c/test_protocol.c -o coverage_test
           LLVM_PROFILE_FILE=coverage.profraw ./coverage_test
@@ -37,7 +41,7 @@ jobs:
 
   independent-omniprobe-runtime:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 70
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -45,8 +49,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential nasm uuid-dev mtools dosfstools \
-            qemu-system-x86 ovmf
+            build-essential nasm uuid-dev acpica-tools mtools dosfstools \
+            ninja-build pkg-config libglib2.0-dev libpixman-1-dev zlib1g-dev \
+            python3-venv wget gnupg xz-utils
+
+      - name: Build signature-verified QEMU 11.1.1
+        run: bash scripts/build_pinned_qemu.sh "$GITHUB_WORKSPACE/qemu-system-x86_64"
 
       - name: Checkout pinned EDK II
         run: |
@@ -58,16 +66,24 @@ jobs:
         run: |
           set -euo pipefail
           cd edk2
-          export PYTHON_COMMAND=python3
           make -C BaseTools
           export WORKSPACE="$PWD"
           export PACKAGES_PATH="$PWD:$GITHUB_WORKSPACE/firmware"
+          export PYTHON_COMMAND=python3
           source edksetup.sh BaseTools
           build -a X64 -t GCC -b RELEASE \
             -p "$GITHUB_WORKSPACE/firmware/OmniPkg/OmniPkg.dsc"
           EFI_BIN="$(find Build/OmniPkg -type f -iname OmniProbe.efi | sort | head -1)"
           test -n "$EFI_BIN"
           cp "$EFI_BIN" "$GITHUB_WORKSPACE/OmniProbe-independent.efi"
+
+          build -a X64 -t GCC -b RELEASE -p OvmfPkg/OvmfPkgX64.dsc
+          mapfile -t OVMF_CODE < <(find Build -type f -path '*/FV/OVMF_CODE.fd' | sort)
+          mapfile -t OVMF_VARS < <(find Build -type f -path '*/FV/OVMF_VARS.fd' | sort)
+          test "${#OVMF_CODE[@]}" -eq 1
+          test "${#OVMF_VARS[@]}" -eq 1
+          cp "${OVMF_CODE[0]}" "$GITHUB_WORKSPACE/OVMF_CODE.independent.fd"
+          cp "${OVMF_VARS[0]}" "$GITHUB_WORKSPACE/OVMF_VARS.independent.fd"
 
       - name: Build commit-bound boot image
         run: |
@@ -83,14 +99,6 @@ jobs:
           mcopy -i omni-independent.img OmniProbe-independent.efi ::/EFI/BOOT/BOOTX64.EFI
           mcopy -i omni-independent.img omni-challenge.txt ::/OMNI-CHALLENGE.TXT
 
-          if [[ -f /usr/share/OVMF/OVMF_CODE.fd && -f /usr/share/OVMF/OVMF_VARS.fd ]]; then
-            cp /usr/share/OVMF/OVMF_CODE.fd OVMF_CODE.independent.fd
-            cp /usr/share/OVMF/OVMF_VARS.fd OVMF_VARS.independent.fd
-          else
-            cp /usr/share/OVMF/OVMF_CODE_4M.fd OVMF_CODE.independent.fd
-            cp /usr/share/OVMF/OVMF_VARS_4M.fd OVMF_VARS.independent.fd
-          fi
-
           sha256sum \
             OmniProbe-independent.efi omni-challenge.txt omni-independent.img \
             OVMF_CODE.independent.fd OVMF_VARS.independent.fd \
@@ -103,7 +111,7 @@ jobs:
           rm -f omni-debug.log omni-serial.log omni-evidence.txt
 
           set +e
-          timeout 30s qemu-system-x86_64 \
+          timeout 30s "$GITHUB_WORKSPACE/qemu-system-x86_64" \
             -machine q35,accel=tcg -m 256 \
             -display none -net none \
             -serial file:omni-serial.log \
