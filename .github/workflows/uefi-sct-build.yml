@@ -22,7 +22,7 @@ jobs:
       - name: Install build prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential nasm uuid-dev python3-pip
+          sudo apt-get install -y build-essential nasm uuid-dev
       - name: Checkout matching EDK II
         run: |
           git clone --depth 1 --branch edk2-stable202508 --recurse-submodules https://github.com/tianocore/edk2.git
@@ -34,7 +34,6 @@ jobs:
       - name: Assemble SCT workspace
         run: |
           cp -a edk2-test/uefi-sct/SctPkg ./SctPkg
-          python3 -m pip install --upgrade -r edk2/pip-requirements.txt
       - name: Build official UEFI SCT X64
         run: |
           chmod +x SctPkg/build.sh
