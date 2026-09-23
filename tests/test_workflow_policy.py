@@ -34,5 +34,22 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertEqual(self.scan(f"steps:\n  - uses: docker://alpine@sha256:{digest}\n"), [])
 
 
+    def test_mutable_latest_runner_is_rejected(self):
+        violations = self.scan("jobs:\n  x:\n    runs-on: ubuntu-latest\n")
+        self.assertEqual(violations[0].code, "MUTABLE_RUNNER_LABEL")
+
+        violations = self.scan(
+            "strategy:\n  matrix:\n    os: [ubuntu-latest, windows-latest]\n"
+        )
+        self.assertTrue(violations)
+        self.assertTrue(all(v.code == "MUTABLE_RUNNER_LABEL" for v in violations))
+
+    def test_pinned_runner_is_allowed(self):
+        self.assertEqual(
+            self.scan("jobs:\n  x:\n    runs-on: ubuntu-24.04\n"),
+            [],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
