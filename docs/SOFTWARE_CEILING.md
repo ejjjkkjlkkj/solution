@@ -67,3 +67,10 @@ Every external GitHub Action is pinned to a 40-hex commit SHA. Local actions are
 Evidence workflows must use explicit runner generations such as `ubuntu-24.04` or `windows-2025`; mutable labels such as `ubuntu-latest`, `windows-latest`, and `macos-latest` are blocking policy violations.
 
 The mandatory workflow-policy gate also rejects `continue-on-error: true`, preventing later edits from silently weakening the software ceiling.
+## Additional mandatory gates
+
+The software ceiling includes the deterministic `IFR Parser Fuzz` gate and the `CI Workflow Lint` gate. The latter validates workflow syntax, immutable action references, repository workflow policy, and the locked external verification toolchain.
+
+The QEMU/OVMF proof uses a deterministic SMBIOS Type 1 UUID and requires OmniProbe to expose that identity in initial and record/replay execution. This is software evidence only. Matching the UUID of the real ASUS platform remains part of physical HIL and is not a prerequisite for `SOFTWARE_CEILING_PASS`.
+
+The remaining physical-only uncertainty is defined in `docs/HARDWARE_ONLY_BOUNDARY.md`.
