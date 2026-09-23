@@ -139,9 +139,9 @@ jobs:
         if: always()
         run: |
           {
-            test -f SCT-DONE.TXT && sha256sum SCT-DONE.TXT || true
-            test -f sct-summary.json && sha256sum sct-summary.json || true
-            test -f sct-serial.log && sha256sum sct-serial.log || true
+            if test -f SCT-DONE.TXT; then sha256sum SCT-DONE.TXT; fi
+            if test -f sct-summary.json; then sha256sum sct-summary.json; fi
+            if test -f sct-serial.log; then sha256sum sct-serial.log; fi
             find sct-results -type f -print0 2>/dev/null | sort -z | xargs -0 -r sha256sum
           } > sct-runtime-sha256.txt
 
