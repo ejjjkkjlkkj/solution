@@ -115,16 +115,41 @@ jobs:
       - name: Install prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential gcc-multilib g++-multilib lcov nasm uuid-dev mono-complete ca-certificates-mono
-          python3 -m pip install --upgrade -r edk2/pip-requirements.txt
-      - name: Run official MdePkg host tests with ASan enabled
+          sudo apt-get install -y build-essential gcc-multilib g++-multilib lcov nasm uuid-dev
+      - name: Build official MdePkg host tests directly from pinned EDK II
         working-directory: edk2
         env:
           ASAN_OPTIONS: detect_leaks=0
         run: |
-          stuart_setup -c ./.pytool/CISettings.py TOOL_CHAIN_TAG=GCC
-          stuart_update -c ./.pytool/CISettings.py TOOL_CHAIN_TAG=GCC
-          stuart_ci_build -c ./.pytool/CISettings.py TOOL_CHAIN_TAG=GCC -t NOOPT -p MdePkg
+          set -euo pipefail
+          make -C BaseTools
+          export WORKSPACE="$PWD"
+          source edksetup.sh BaseTools
+          build -a X64 -t GCC -b NOOPT -p MdePkg/Test/MdePkgHostTest.dsc
+      - name: Execute every declared MdePkg host test binary
+        working-directory: edk2
+        env:
+          ASAN_OPTIONS: detect_leaks=0
+        run: |
+          set -euo pipefail
+          names=(
+            TestBaseSafeIntLibHost
+            BaseLibUnitTestsHost
+            GoogleTestBaseSafeIntLib
+            TestDevicePathLibHost
+            GoogleTestBaseLib
+          )
+          for name in "${names[@]}"; do
+            mapfile -t matches < <(find Build/MdePkg/HostTest -type f -perm -111 -name "$name" | sort)
+            if [[ "${#matches[@]}" -ne 1 ]]; then
+              printf 'expected exactly one executable %s, found %s\n' "$name" "${#matches[@]}" >&2
+              printf '%s\n' "${matches[@]}" >&2
+              exit 1
+            fi
+            echo "RUNNING_HOST_TEST=$name"
+            "${matches[0]}"
+          done
+          echo "EDK2_MDEPKG_HOST_TESTS_DIRECT_PASS"
 
   uefi-qemu:
     runs-on: ubuntu-24.04
