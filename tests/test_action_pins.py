@@ -25,7 +25,9 @@ class ActionPinTests(unittest.TestCase):
             return verify(root)
 
     def test_mutable_docker_reference_is_rejected(self):
-        result = self._verify_fixture("jobs:\n  x:\n    steps:\n      - uses: docker://ghcr.io/acme/tool:latest\n")
+        result = self._verify_fixture(
+            "jobs:\n  x:\n    steps:\n      - uses: docker://ghcr.io/acme/tool:latest\n"
+        )
         self.assertEqual(result["status"], "FAIL")
         self.assertEqual(result["violations"][0]["reason"], "DOCKER_NOT_DIGEST_PINNED")
 
@@ -50,6 +52,22 @@ class ActionPinTests(unittest.TestCase):
         )
         self.assertEqual(result["status"], "FAIL")
         self.assertEqual(result["violations"][0]["reason"], "ACTION_NOT_LOCKED")
+
+    def test_flow_style_uses_cannot_bypass_pin_verifier(self):
+        sha = "a" * 40
+        result = self._verify_fixture(
+            f"jobs: {{x: {{steps: [{{uses: actions/checkout@{sha}}}]}}}}\n",
+            {"checkout": sha},
+        )
+        self.assertEqual(result["status"], "FAIL")
+        self.assertTrue(
+            any(v["reason"] == "USES_SYNTAX_UNSUPPORTED" for v in result["violations"]),
+            result,
+        )
+
+    def test_comment_uses_is_ignored(self):
+        result = self._verify_fixture("# uses: actions/checkout@v4\n")
+        self.assertEqual(result["status"], "PASS", result["violations"])
 
 
 if __name__ == "__main__":

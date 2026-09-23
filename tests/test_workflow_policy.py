@@ -24,6 +24,25 @@ class WorkflowPolicyTests(unittest.TestCase):
         violations = self.scan("jobs:\n  x:\n    continue-on-error: true\n")
         self.assertEqual(violations[0].code, "CONTINUE_ON_ERROR_TRUE")
 
+    def test_flow_style_continue_on_error_is_rejected(self):
+        violations = self.scan(
+            "jobs: {x: {runs-on: ubuntu-24.04, continue-on-error: true}}\n"
+        )
+        self.assertTrue(
+            any(v.code == "CONTINUE_ON_ERROR_TRUE" for v in violations),
+            violations,
+        )
+
+    def test_flow_style_uses_is_rejected_fail_closed(self):
+        sha = "a" * 40
+        violations = self.scan(
+            f"jobs: {{x: {{steps: [{{uses: actions/checkout@{sha}}}]}}}}\n"
+        )
+        self.assertTrue(
+            any(v.code == "USES_SYNTAX_UNSUPPORTED" for v in violations),
+            violations,
+        )
+
     def test_local_action_is_allowed(self):
         self.assertEqual(self.scan("steps:\n  - uses: ./local-action\n"), [])
 
@@ -32,7 +51,6 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertEqual(violations[0].code, "DOCKER_NOT_DIGEST_PINNED")
         digest = "b" * 64
         self.assertEqual(self.scan(f"steps:\n  - uses: docker://alpine@sha256:{digest}\n"), [])
-
 
     def test_mutable_latest_runner_is_rejected(self):
         violations = self.scan("jobs:\n  x:\n    runs-on: ubuntu-latest\n")
@@ -49,7 +67,6 @@ class WorkflowPolicyTests(unittest.TestCase):
             self.scan("jobs:\n  x:\n    runs-on: ubuntu-24.04\n"),
             [],
         )
-
 
     def test_mutable_pip_installs_are_rejected(self):
         for command in (
@@ -86,6 +103,18 @@ class WorkflowPolicyTests(unittest.TestCase):
         -r requirements-build.lock
 """
         self.assertEqual(self.scan(workflow), [])
+
+    def test_policy_keywords_in_comments_are_ignored(self):
+        workflow = """# continue-on-error: true
+# uses: actions/checkout@v4
+jobs:
+  x:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: echo ok
+"""
+        self.assertEqual(self.scan(workflow), [])
+
 
 if __name__ == "__main__":
     unittest.main()

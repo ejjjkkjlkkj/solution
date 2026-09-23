@@ -7,6 +7,7 @@ import re
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 USES_RE = re.compile(r"^\s*(?:-\s*)?uses:\s*([^\s#]+)\s*(?:#.*)?$")
+FLOW_USES_RE = re.compile(r"(?:^|[,{[])\s*-?\s*uses\s*:", re.IGNORECASE)
 ACTION_REF_RE = re.compile(
     r"^([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*)@([0-9a-fA-F]{40})$"
 )
@@ -19,6 +20,27 @@ ACTION_LOCK_KEYS = {
     "actions/download-artifact": "download_artifact",
     "actions/attest": "attest",
 }
+
+
+def _strip_unquoted_comment(line: str) -> str:
+    quote: str | None = None
+    escaped = False
+    for index, char in enumerate(line):
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\" and quote == '"':
+            escaped = True
+            continue
+        if char in {"'", '"'}:
+            if quote is None:
+                quote = char
+            elif quote == char:
+                quote = None
+            continue
+        if char == "#" and quote is None:
+            return line[:index]
+    return line
 
 
 def _locked_actions(root: pathlib.Path) -> dict[str, str]:
@@ -52,7 +74,7 @@ def verify(root: pathlib.Path = ROOT) -> dict[str, object]:
         locked_actions = _locked_actions(root)
     except ValueError as exc:
         return {
-            "schema": "omniexec.action-pins.v2",
+            "schema": "omniexec.action-pins.v3",
             "status": "FAIL",
             "checked": 0,
             "violations": [
@@ -68,8 +90,19 @@ def verify(root: pathlib.Path = ROOT) -> dict[str, object]:
     for path in sorted(workflows.glob("*.y*ml")):
         relative = path.relative_to(root).as_posix()
         for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            match = USES_RE.match(line)
+            active = _strip_unquoted_comment(line)
+            match = USES_RE.match(active)
             if not match:
+                if FLOW_USES_RE.search(active):
+                    checked += 1
+                    violations.append(
+                        {
+                            "file": relative,
+                            "line": str(line_number),
+                            "uses": active.strip(),
+                            "reason": "USES_SYNTAX_UNSUPPORTED",
+                        }
+                    )
                 continue
 
             value = match.group(1)
@@ -123,7 +156,7 @@ def verify(root: pathlib.Path = ROOT) -> dict[str, object]:
                 )
 
     return {
-        "schema": "omniexec.action-pins.v2",
+        "schema": "omniexec.action-pins.v3",
         "status": "PASS" if not violations else "FAIL",
         "checked": checked,
         "violations": violations,

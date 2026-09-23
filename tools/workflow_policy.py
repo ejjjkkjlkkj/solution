@@ -8,7 +8,11 @@ import re
 from dataclasses import dataclass
 
 USES_RE = re.compile(r"^\s*-?\s*uses:\s*([^\s#]+)", re.IGNORECASE)
-CONTINUE_RE = re.compile(r"^\s*continue-on-error:\s*true\s*(?:#.*)?$", re.IGNORECASE)
+FLOW_USES_RE = re.compile(r"(?:^|[,{[])\s*-?\s*uses\s*:", re.IGNORECASE)
+CONTINUE_RE = re.compile(
+    r"(?:^|[{,])\s*-?\s*continue-on-error\s*:\s*true(?:\s*[,}]|\s*$)",
+    re.IGNORECASE,
+)
 COMMIT_REF_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 DOCKER_DIGEST_RE = re.compile(r"^docker://.+@sha256:[0-9a-fA-F]{64}$")
 MUTABLE_RUNNER_RE = re.compile(r"(?:ubuntu|windows|macos)-latest", re.IGNORECASE)
@@ -23,28 +27,61 @@ class Violation:
     value: str
 
 
+def _strip_unquoted_comment(line: str) -> str:
+    quote: str | None = None
+    escaped = False
+    for index, char in enumerate(line):
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\" and quote == '"':
+            escaped = True
+            continue
+        if char in {"'", '"'}:
+            if quote is None:
+                quote = char
+            elif quote == char:
+                quote = None
+            continue
+        if char == "#" and quote is None:
+            return line[:index]
+    return line
+
+
 def inspect_file(path: pathlib.Path) -> list[Violation]:
     violations: list[Violation] = []
     lines = path.read_text(encoding="utf-8").splitlines()
     for index, raw in enumerate(lines):
         number = index + 1
-        if CONTINUE_RE.match(raw):
-            violations.append(Violation(str(path), number, "CONTINUE_ON_ERROR_TRUE", raw.strip()))
-        if MUTABLE_RUNNER_RE.search(raw):
-            violations.append(Violation(str(path), number, "MUTABLE_RUNNER_LABEL", raw.strip()))
+        active = _strip_unquoted_comment(raw)
 
-        if PIP_INSTALL_RE.search(raw):
-            command_parts = [raw.strip()]
+        if CONTINUE_RE.search(active):
+            violations.append(
+                Violation(str(path), number, "CONTINUE_ON_ERROR_TRUE", active.strip())
+            )
+        if MUTABLE_RUNNER_RE.search(active):
+            violations.append(
+                Violation(str(path), number, "MUTABLE_RUNNER_LABEL", active.strip())
+            )
+
+        if PIP_INSTALL_RE.search(active):
+            command_parts = [active.strip()]
             cursor = index
             while command_parts[-1].rstrip().endswith("\\") and cursor + 1 < len(lines):
                 cursor += 1
-                command_parts.append(lines[cursor].strip())
+                command_parts.append(_strip_unquoted_comment(lines[cursor]).strip())
             command = " ".join(command_parts)
             if "--require-hashes" not in command:
-                violations.append(Violation(str(path), number, "PIP_INSTALL_WITHOUT_HASHES", command))
+                violations.append(
+                    Violation(str(path), number, "PIP_INSTALL_WITHOUT_HASHES", command)
+                )
 
-        match = USES_RE.match(raw)
+        match = USES_RE.match(active)
         if not match:
+            if FLOW_USES_RE.search(active):
+                violations.append(
+                    Violation(str(path), number, "USES_SYNTAX_UNSUPPORTED", active.strip())
+                )
             continue
         target = match.group(1)
 
@@ -52,7 +89,9 @@ def inspect_file(path: pathlib.Path) -> list[Violation]:
             continue
         if target.startswith("docker://"):
             if not DOCKER_DIGEST_RE.fullmatch(target):
-                violations.append(Violation(str(path), number, "DOCKER_NOT_DIGEST_PINNED", target))
+                violations.append(
+                    Violation(str(path), number, "DOCKER_NOT_DIGEST_PINNED", target)
+                )
             continue
         if "@" not in target:
             violations.append(Violation(str(path), number, "ACTION_REF_MISSING", target))
@@ -60,7 +99,9 @@ def inspect_file(path: pathlib.Path) -> list[Violation]:
 
         action, ref = target.rsplit("@", 1)
         if "/" not in action or not COMMIT_REF_RE.fullmatch(ref):
-            violations.append(Violation(str(path), number, "ACTION_NOT_COMMIT_PINNED", target))
+            violations.append(
+                Violation(str(path), number, "ACTION_NOT_COMMIT_PINNED", target)
+            )
 
     return violations
 
@@ -87,7 +128,7 @@ def main() -> int:
         return 2
 
     result = {
-        "schema": "omni.workflow-policy.v1",
+        "schema": "omni.workflow-policy.v2",
         "status": "PASS" if not violations else "FAIL",
         "violations": [v.__dict__ for v in violations],
     }
