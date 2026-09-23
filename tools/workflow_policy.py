@@ -26,6 +26,8 @@ def inspect_file(path: pathlib.Path) -> list[Violation]:
     for number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         if CONTINUE_RE.match(raw):
             violations.append(Violation(str(path), number, "CONTINUE_ON_ERROR_TRUE", raw.strip()))
+        if MUTABLE_RUNNER_RE.search(raw):
+            violations.append(Violation(str(path), number, "MUTABLE_RUNNER_LABEL", raw.strip()))
 
         match = USES_RE.match(raw)
         if not match:
