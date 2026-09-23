@@ -49,6 +49,7 @@ jobs:
           make -C BaseTools
           export WORKSPACE="$PWD"
           export PACKAGES_PATH="$PWD:$GITHUB_WORKSPACE/firmware"
+          export PYTHON_COMMAND=python3
           source edksetup.sh BaseTools
           build -a X64 -t GCC -b RELEASE -p "$GITHUB_WORKSPACE/firmware/OmniPkg/OmniPkg.dsc"
           EFI_BIN="$(find Build/OmniPkg -iname OmniProbe.efi | head -1)"
