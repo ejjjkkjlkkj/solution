@@ -18,6 +18,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+      - name: Install LLVM coverage tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm
+          llvm-profdata --version
+          llvm-cov --version
       - name: Instrument native core
         run: >-
           clang -std=c11 -O0 -Wall -Wextra -Wpedantic -Werror
@@ -153,6 +159,23 @@ jobs:
           cat omni-debug.log
           grep -a 'OMNI_UEFI_PASS' omni-debug.log
           test "$rc" -eq 0 -o "$rc" -eq 124
+      - name: Deterministic QEMU record/replay
+        run: |
+          cp /usr/share/OVMF/OVMF_VARS.fd OVMF_RR_RECORD.fd
+          cp /usr/share/OVMF/OVMF_VARS.fd OVMF_RR_REPLAY.fd
+          set +e
+          timeout 30s qemu-system-x86_64             -machine q35,accel=tcg -m 256             -display none -serial none             -debugcon file:record-debug.log             -global isa-debugcon.iobase=0x402             -icount shift=auto,rr=record,rrfile=omni.rr             -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE.fd             -drive if=pflash,format=raw,file=OVMF_RR_RECORD.fd             -drive file=omni-fat.img,format=raw
+          record_rc=$?
+          set -e
+          test -s omni.rr
+          grep -a 'OMNI_UEFI_PASS' record-debug.log
+          test "$record_rc" -eq 0 -o "$record_rc" -eq 124
+          set +e
+          timeout 30s qemu-system-x86_64             -machine q35,accel=tcg -m 256             -display none -serial none             -debugcon file:replay-debug.log             -global isa-debugcon.iobase=0x402             -icount shift=auto,rr=replay,rrfile=omni.rr             -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE.fd             -drive if=pflash,format=raw,file=OVMF_RR_REPLAY.fd             -drive file=omni-fat.img,format=raw
+          replay_rc=$?
+          set -e
+          grep -a 'OMNI_UEFI_PASS' replay-debug.log
+          test "$replay_rc" -eq 0 -o "$replay_rc" -eq 124
 
   compiler-differential:
     runs-on: ubuntu-latest
