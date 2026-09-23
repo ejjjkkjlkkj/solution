@@ -10,24 +10,39 @@ import zipfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 MANIFEST_NAME = "OMNI-BUNDLE-MANIFEST.json"
+SUPPORTED_GIT_MODES = {"100644", "100755"}
 
 
 def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def tracked_members(root: pathlib.Path) -> list[tuple[str, bytes]]:
+def tracked_members(root: pathlib.Path) -> list[tuple[str, bytes, int]]:
     root = root.resolve()
     proc = subprocess.run(
-        ["git", "-C", str(root), "ls-files", "-z"],
+        ["git", "-C", str(root), "ls-files", "--stage", "-z"],
         check=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
-    names = [name for name in proc.stdout.decode("utf-8").split("\0") if name]
-    members: list[tuple[str, bytes]] = []
+    records = [record for record in proc.stdout.split(b"\0") if record]
+    members: list[tuple[str, bytes, int]] = []
 
-    for name in sorted(names):
+    for record in records:
+        try:
+            meta, path_raw = record.split(b"\t", 1)
+            mode_raw, _object_raw, stage_raw = meta.split(b" ", 2)
+            mode_text = mode_raw.decode("ascii")
+            stage = stage_raw.decode("ascii")
+            name = path_raw.decode("utf-8")
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise ValueError("malformed git index entry") from exc
+
+        if stage != "0":
+            raise ValueError(f"unmerged git index entry: {name}")
+        if mode_text not in SUPPORTED_GIT_MODES:
+            raise ValueError(f"unsupported tracked git mode {mode_text}: {name}")
+
         rel = pathlib.PurePosixPath(name)
         if rel.is_absolute() or ".." in rel.parts:
             raise ValueError(f"unsafe tracked path: {name}")
@@ -42,14 +57,16 @@ def tracked_members(root: pathlib.Path) -> list[tuple[str, bytes]]:
             raise ValueError(f"tracked path escapes repository: {name}") from exc
         if rel.as_posix() == MANIFEST_NAME:
             raise ValueError(f"reserved bundle manifest path is tracked: {MANIFEST_NAME}")
-        members.append((rel.as_posix(), path.read_bytes()))
 
+        members.append((rel.as_posix(), path.read_bytes(), int(mode_text, 8)))
+
+    members.sort(key=lambda item: item[0])
     if not members:
         raise ValueError("repository has no tracked files")
     return members
 
 
-def manifest_bytes(members: list[tuple[str, bytes]]) -> bytes:
+def manifest_bytes(members: list[tuple[str, bytes, int]]) -> bytes:
     payload = {
         "schema": "omni.bundle-manifest.v1",
         "files": [
@@ -58,7 +75,7 @@ def manifest_bytes(members: list[tuple[str, bytes]]) -> bytes:
                 "bytes": len(data),
                 "sha256": sha256_bytes(data),
             }
-            for name, data in members
+            for name, data, _mode in members
         ],
     }
     return (
@@ -66,11 +83,13 @@ def manifest_bytes(members: list[tuple[str, bytes]]) -> bytes:
     ).encode("utf-8")
 
 
-def zip_info(name: str) -> zipfile.ZipInfo:
+def zip_info(name: str, mode: int = 0o100644) -> zipfile.ZipInfo:
+    if mode not in {0o100644, 0o100755}:
+        raise ValueError(f"unsupported ZIP member mode for {name}: {mode:o}")
     info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
     info.compress_type = zipfile.ZIP_STORED
     info.create_system = 3
-    info.external_attr = (0o100644 & 0xFFFF) << 16
+    info.external_attr = (mode & 0xFFFF) << 16
     return info
 
 
@@ -86,9 +105,9 @@ def create_bundle(root: pathlib.Path, output: pathlib.Path) -> str:
         compression=zipfile.ZIP_STORED,
         allowZip64=True,
     ) as archive:
-        for name, data in members:
+        for name, data, mode in members:
             archive.writestr(
-                zip_info(name),
+                zip_info(name, mode),
                 data,
                 compress_type=zipfile.ZIP_STORED,
             )
