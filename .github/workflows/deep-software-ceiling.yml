@@ -138,7 +138,7 @@ jobs:
           export WORKSPACE="$PWD"
           export PACKAGES_PATH="$PWD:$GITHUB_WORKSPACE/firmware"
           source edksetup.sh BaseTools
-          build -a X64 -t GCC5 -b RELEASE -p "$GITHUB_WORKSPACE/firmware/OmniPkg/OmniPkg.dsc"
+          build -a X64 -t GCC -b RELEASE -p "$GITHUB_WORKSPACE/firmware/OmniPkg/OmniPkg.dsc"
           find Build/OmniPkg -iname OmniProbe.efi -print
       - name: Build bootable FAT image
         run: |
