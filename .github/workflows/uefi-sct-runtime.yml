@@ -30,7 +30,7 @@ jobs:
       - name: Install prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential nasm uuid-dev mtools dosfstools \
+          sudo apt-get install -y build-essential nasm uuid-dev acpica-tools mtools dosfstools \
             ninja-build pkg-config libglib2.0-dev libpixman-1-dev zlib1g-dev \
             python3-venv wget gnupg xz-utils
 
