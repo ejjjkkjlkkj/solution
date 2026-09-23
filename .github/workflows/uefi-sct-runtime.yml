@@ -42,7 +42,7 @@ jobs:
 
       - name: Build official SCT
         run: |
-          python3 -m pip install --upgrade -r edk2/pip-requirements.txt
+
           chmod +x SctPkg/build.sh
           ./SctPkg/build.sh X64 GCC RELEASE
           SCT_PACKAGE="$GITHUB_WORKSPACE/Build/UefiSct/RELEASE_GCC5/SctPackageX64"
