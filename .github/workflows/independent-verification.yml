@@ -161,10 +161,14 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p /tmp/a /tmp/b
+          python tools/verify_git_snapshot.py --expect-commit "$GITHUB_SHA" > /tmp/a/source-snapshot-before.json
           python tools/deterministic_bundle.py /tmp/a/software-bundle.zip > /tmp/a/sha.txt
           python tools/deterministic_bundle.py /tmp/b/software-bundle.zip > /tmp/b/sha.txt
           cmp /tmp/a/software-bundle.zip /tmp/b/software-bundle.zip
           cmp /tmp/a/sha.txt /tmp/b/sha.txt
+          python tools/verify_bundle_commit.py /tmp/a/software-bundle.zip --expect-commit "$GITHUB_SHA" > /tmp/a/bundle-commit-binding.json
+          python tools/verify_bundle_commit.py /tmp/b/software-bundle.zip --expect-commit "$GITHUB_SHA" > /tmp/b/bundle-commit-binding.json
+          python tools/verify_git_snapshot.py --expect-commit "$GITHUB_SHA" > /tmp/a/source-snapshot-after.json
           python tools/build_provenance.py /tmp/a/software-bundle.zip /tmp/a/provenance.json
 
       - name: Verify provenance binds artifact and commit
@@ -194,6 +198,10 @@ jobs:
             /tmp/a/software-bundle.zip
             /tmp/a/sha.txt
             /tmp/a/provenance.json
+            /tmp/a/source-snapshot-before.json
+            /tmp/a/source-snapshot-after.json
+            /tmp/a/bundle-commit-binding.json
+            /tmp/b/bundle-commit-binding.json
 
   independent-workflow-policy:
     runs-on: ubuntu-24.04
