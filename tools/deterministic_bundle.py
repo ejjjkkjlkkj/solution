@@ -19,6 +19,18 @@ def sha256_bytes(data: bytes) -> str:
 
 def tracked_members(root: pathlib.Path) -> list[tuple[str, bytes, int]]:
     root = root.resolve()
+    for diff_args, label in (
+        (("diff", "--quiet", "--ignore-submodules=none", "--"), "tracked worktree"),
+        (("diff", "--cached", "--quiet", "--ignore-submodules=none", "--"), "index"),
+    ):
+        clean = subprocess.run(
+            ["git", "-C", str(root), *diff_args],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        if clean.returncode != 0:
+            raise ValueError(f"{label} is dirty")
+
     proc = subprocess.run(
         ["git", "-C", str(root), "ls-files", "--stage", "-z"],
         check=True,
@@ -31,7 +43,7 @@ def tracked_members(root: pathlib.Path) -> list[tuple[str, bytes, int]]:
     for record in records:
         try:
             meta, path_raw = record.split(b"\t", 1)
-            mode_raw, _object_raw, stage_raw = meta.split(b" ", 2)
+            mode_raw, object_raw, stage_raw = meta.split(b" ", 2)
             mode_text = mode_raw.decode("ascii")
             stage = stage_raw.decode("ascii")
             name = path_raw.decode("utf-8")
@@ -46,19 +58,20 @@ def tracked_members(root: pathlib.Path) -> list[tuple[str, bytes, int]]:
         rel = pathlib.PurePosixPath(name)
         if rel.is_absolute() or ".." in rel.parts:
             raise ValueError(f"unsafe tracked path: {name}")
-        path = root.joinpath(*rel.parts)
-        if path.is_symlink():
-            raise ValueError(f"tracked symlink is not allowed in deterministic bundle: {name}")
-        if not path.is_file():
-            raise ValueError(f"tracked file missing from worktree: {name}")
-        try:
-            path.resolve().relative_to(root)
-        except ValueError as exc:
-            raise ValueError(f"tracked path escapes repository: {name}") from exc
         if rel.as_posix() == MANIFEST_NAME:
             raise ValueError(f"reserved bundle manifest path is tracked: {MANIFEST_NAME}")
 
-        members.append((rel.as_posix(), path.read_bytes(), int(mode_text, 8)))
+        try:
+            object_sha = object_raw.decode("ascii")
+        except UnicodeDecodeError as exc:
+            raise ValueError(f"invalid Git object id for {name}") from exc
+        blob = subprocess.run(
+            ["git", "-C", str(root), "cat-file", "blob", object_sha],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        ).stdout
+        members.append((rel.as_posix(), blob, int(mode_text, 8)))
 
     members.sort(key=lambda item: item[0])
     if not members:
