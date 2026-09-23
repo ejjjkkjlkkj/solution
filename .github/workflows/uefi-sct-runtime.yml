@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 70
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install prerequisites
         run: |
@@ -131,7 +131,7 @@ jobs:
             find sct-results -type f -print0 2>/dev/null | sort -z | xargs -0 -r sha256sum
           } > sct-runtime-sha256.txt
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: uefi-sct-runtime-evidence
