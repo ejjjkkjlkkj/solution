@@ -14,7 +14,9 @@ NormalizedEvent = tuple[object, str, str, str, tuple[str, ...]]
 def normalize(event: object) -> NormalizedEvent:
     if not isinstance(event, dict):
         raise TraceError("event must be an object")
-    raw_node = event.get("node") or {}
+    raw_node = event.get("node")
+    if raw_node is None:
+        raw_node = {}
     if not isinstance(raw_node, dict):
         raise TraceError("event node must be an object")
     raw_state = raw_node.get("state", [])
