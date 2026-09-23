@@ -67,7 +67,7 @@ class ActionPinTests(unittest.TestCase):
 
     def test_quoted_uses_key_cannot_bypass_pin_verifier(self):
         result = self._verify_fixture(
-            'steps:\\n  - "uses": actions/checkout@v4\\n',
+            'steps:\n  - "uses": actions/checkout@v4\n',
             {"checkout": "a" * 40},
         )
         self.assertEqual(result["status"], "FAIL")
@@ -75,7 +75,7 @@ class ActionPinTests(unittest.TestCase):
 
     def test_explicit_uses_key_is_rejected_fail_closed(self):
         result = self._verify_fixture(
-            "? uses\\n: actions/checkout@v4\\n",
+            "? uses\n: actions/checkout@v4\n",
             {"checkout": "a" * 40},
         )
         self.assertEqual(result["status"], "FAIL")
