@@ -1,8 +1,14 @@
 name: Software Ceiling
 on:
   push:
-  pull_request:
   workflow_dispatch:
+
+concurrency:
+  group: software-ceiling-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   core:
