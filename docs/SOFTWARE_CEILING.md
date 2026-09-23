@@ -1,11 +1,11 @@
 # Software ceiling contract
 
-A software property is not allowed to remain a hardware question if it can be reproduced in an emulator, model checker, sanitizer, fuzzer, host test or independent build runner.
+A property is not allowed to remain a hardware question if it can be reproduced in an emulator, model checker, sanitizer, fuzzer, host test, static analyzer or independent build runner.
 
 ## Required software evidence
 
-- Python semantic and evidence tests
-- strict native diagnostics
+- semantic, IFR, SCT-summary and physical-evidence verifier tests
+- strict native diagnostics plus GCC -fanalyzer and Clang static analysis
 - ASan + UBSan
 - 100% line/function/region/branch coverage for the bounded protocol core
 - 100k+ coverage-guided fuzz smoke
@@ -13,17 +13,35 @@ A software property is not allowed to remain a hardware question if it can be re
 - Frama-C Eva + WP/RTE proof obligations
 - GCC/Clang differential execution
 - EDK II official host tests with ASan
-- our EFI binary built by real EDK II
-- real OVMF/QEMU execution
-- deterministic QEMU record/replay
-- two independent runners producing bit-identical native output
-- GitHub build provenance attestation
-- official UEFI SCT package built reproducibly
+- OmniProbe.efi built by pinned EDK II edk2-stable202608
+- OVMF/QEMU TCG execution with fail-closed HII/evidence/final markers
+- deterministic QEMU record/replay with blkreplay
+- bit-identical native output from independent runners
+- bit-identical OmniProbe.efi from independent runners
+- GitHub/Sigstore provenance attestation plus verification
+- official UEFI SCT build and runtime against pinned OVMF
+- physical-media evidence verifier bound to the expected EFI SHA-256
 
-## Important SCT distinction
+## Pinned supply-chain inputs
 
-Building the official SCT is not a conformance pass. A UEFI conformance gate is PASS only after the relevant SCT suites execute against the target firmware and the results are parsed with no disallowed failures.
+EDK II stable 202608 is pinned to commit 2970e5699ba6267f3384ffab20f96647578aebc8.
+SCT runtime/build uses edk2-test-stable202509 commit 2b2a16ac239cd89d778cb79ae6e42c533fc4c25a with edk2-stable202508 commit d46aa46c8361194521391aa581593e556c707c6e.
+
+GitHub artifact attestations are treated as SLSA v1.0 Build Level 2 evidence. This repository does not claim Build Level 3 solely from an attestation.
+
+## SCT distinction
+
+A successful SCT build or an SCT run against OVMF is not a conformance result for the ASUS firmware. OEM conformance exists only after the applicable SCT suites execute against that physical target and the result set is parsed under an explicit policy.
 
 ## Hardware-only boundary
 
-Only after all applicable software gates are PASS may remaining failures be attributed to physical keyboard scanning, the ASUS OEM implementation, physical HDA codec/amplifier/EAPD routing, speaker acoustics, physical timing/jitter, TPM hardware behavior, or other electrical/platform-specific facts.
+Only after all applicable software gates are PASS may remaining uncertainty be assigned to:
+
+- ASUS M1603QA physical OEM UEFI execution
+- real pre-OS keyboard scanning/focus timing
+- physical HDA codec, amplifier/EAPD and speaker acoustics
+- real interrupt/timing/jitter behavior
+- TPM hardware quote/measurement behavior
+- other electrical/OEM-specific behavior
+
+NOT_RUN, SKIP, timeout, missing marker, missing artifact or unverified provenance must never become PASS.
