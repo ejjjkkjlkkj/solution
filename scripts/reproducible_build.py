@@ -7,7 +7,7 @@ ENV["PYTHONHASHSEED"] = "0"
 def digest(path: pathlib.Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest().upper()
 def build_once(dest: pathlib.Path) -> pathlib.Path:
-    subprocess.run([os.sys.executable, "-m", "build", "--wheel", "--outdir", str(dest)], cwd=ROOT, env=ENV, check=True)
+    subprocess.run([os.sys.executable, "-m", "build", "--no-isolation", "--wheel", "--outdir", str(dest)], cwd=ROOT, env=ENV, check=True)
     wheels = list(dest.glob("*.whl"))
     if len(wheels) != 1:
         raise RuntimeError(f"expected one wheel, got {wheels}")
