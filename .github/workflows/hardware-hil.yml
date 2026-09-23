@@ -164,26 +164,27 @@ jobs:
           New-Item -ItemType Directory -Force vmware-hil | Out-Null
           Copy-Item hil\omni-boot.vmdk vmware-hil\omni-boot.vmdk -Force
           $serial = (Join-Path (Resolve-Path vmware-hil).Path 'serial.log').Replace('\','/')
-          @"
-.encoding = "UTF-8"
-config.version = "8"
-virtualHW.version = "21"
-displayName = "OmniExec-UEFI-HIL"
-guestOS = "other-64"
-firmware = "efi"
-memsize = "512"
-numvcpus = "1"
-vhv.enable = "FALSE"
-ide0:0.present = "TRUE"
-ide0:0.fileName = "omni-boot.vmdk"
-serial0.present = "TRUE"
-serial0.fileType = "file"
-serial0.fileName = "$serial"
-serial0.tryNoRxLoss = "FALSE"
-sound.present = "FALSE"
-ethernet0.present = "FALSE"
-usb.present = "FALSE"
-"@ | Set-Content vmware-hil\omni.vmx -Encoding ascii
+          $vmxLines = @(
+            '.encoding = "UTF-8"',
+            'config.version = "8"',
+            'virtualHW.version = "21"',
+            'displayName = "OmniExec-UEFI-HIL"',
+            'guestOS = "other-64"',
+            'firmware = "efi"',
+            'memsize = "512"',
+            'numvcpus = "1"',
+            'vhv.enable = "FALSE"',
+            'ide0:0.present = "TRUE"',
+            'ide0:0.fileName = "omni-boot.vmdk"',
+            'serial0.present = "TRUE"',
+            'serial0.fileType = "file"',
+            ('serial0.fileName = "' + $serial + '"'),
+            'serial0.tryNoRxLoss = "FALSE"',
+            'sound.present = "FALSE"',
+            'ethernet0.present = "FALSE"',
+            'usb.present = "FALSE"'
+          )
+          $vmxLines | Set-Content vmware-hil\omni.vmx -Encoding ascii
 
           $vmx = (Resolve-Path vmware-hil\omni.vmx).Path
           & $vmrun start $vmx nogui
