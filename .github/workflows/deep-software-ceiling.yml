@@ -108,7 +108,7 @@ jobs:
       - name: Install prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential lcov nasm uuid-dev
+          sudo apt-get install -y build-essential lcov nasm uuid-dev mono-complete ca-certificates-mono
           python3 -m pip install --upgrade -r edk2/pip-requirements.txt
       - name: Run official MdePkg host tests with ASan enabled
         working-directory: edk2
