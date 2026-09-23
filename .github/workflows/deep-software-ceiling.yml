@@ -73,7 +73,7 @@ jobs:
       - name: Install Frama-C 33 through opam
         run: |
           sudo apt-get update
-          sudo apt-get install -y opam libgmp-dev graphviz
+          sudo apt-get install -y opam libgmp-dev graphviz patch graphviz
           opam init --disable-sandboxing -y
           opam switch create 5.3.0 -y
           eval "$(opam env)"
@@ -211,6 +211,20 @@ jobs:
           test "$replay_rc" -eq 0
           cmp --silent record-debug.log replay-debug.log
 
+  static-analysis:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: GCC interprocedural analyzer
+        run: >-
+          gcc -std=c11 -O2 -Wall -Wextra -Wpedantic -Werror
+          -fanalyzer -Iinclude -c c/omni_protocol.c -o /tmp/omni_protocol.o
+      - name: Clang static analyzer
+        run: >-
+          clang --analyze -std=c11
+          -Wall -Wextra -Wpedantic -Werror
+          -Iinclude c/omni_protocol.c
+
   compiler-differential:
     runs-on: ubuntu-latest
     strategy:
@@ -225,6 +239,6 @@ jobs:
 
   software-deep-pass:
     runs-on: ubuntu-latest
-    needs: [coverage, fuzz-100k, cbmc, framac, edk2-host-tests, uefi-qemu, compiler-differential]
+    needs: [coverage, fuzz-100k, cbmc, framac, edk2-host-tests, uefi-qemu, static-analysis, compiler-differential]
     steps:
       - run: echo "DEEP_SOFTWARE_GATES_PASS"
