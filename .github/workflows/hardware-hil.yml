@@ -195,6 +195,7 @@ jobs:
           @'
           $ErrorActionPreference = "Stop"
           $cs = Get-CimInstance Win32_ComputerSystem
+          $csp = Get-CimInstance Win32_ComputerSystemProduct
           $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
           $bios = Get-CimInstance Win32_BIOS
           $board = Get-CimInstance Win32_BaseBoard
@@ -202,6 +203,12 @@ jobs:
           if ($cs.Manufacturer -notmatch "ASUSTeK") { throw "Unexpected manufacturer: $($cs.Manufacturer)" }
           if ($cs.Model -notmatch "M1603QA|VivoBook") { throw "Unexpected model: $($cs.Model)" }
           if ($cpu.Name -notmatch "Ryzen 7 5800H") { throw "Unexpected CPU: $($cpu.Name)" }
+          if ($csp.UUID -notmatch "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$") {
+            throw "Invalid SMBIOS system UUID: $($csp.UUID)"
+          }
+          if ($csp.UUID -in @("00000000-0000-0000-0000-000000000000","FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF")) {
+            throw "Non-meaningful SMBIOS system UUID: $($csp.UUID)"
+          }
 
           $secureBoot = $null
           try { $secureBoot = Confirm-SecureBootUEFI -ErrorAction Stop } catch {}
@@ -222,6 +229,7 @@ jobs:
             TimestampUtc = [DateTime]::UtcNow.ToString("o")
             Identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
             ComputerSystem = $cs | Select-Object Manufacturer,Model,SystemType,TotalPhysicalMemory
+            ComputerSystemProduct = $csp | Select-Object Vendor,Name,Version,IdentifyingNumber,UUID
             Processor = $cpu | Select-Object Name,NumberOfCores,NumberOfLogicalProcessors
             BIOS = $bios | Select-Object Manufacturer,SMBIOSBIOSVersion,Version,ReleaseDate
             BaseBoard = $board | Select-Object Manufacturer,Product,Version
