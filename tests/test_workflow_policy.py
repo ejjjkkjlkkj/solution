@@ -56,6 +56,8 @@ class WorkflowPolicyTests(unittest.TestCase):
             "python -m pip install -e .",
             "python3 -m pip install -r requirements.txt",
             "python3 -m pip install --upgrade -r requirements.txt",
+            "pip3 install -r requirements.txt",
+            "pip3.13 install -r requirements.txt",
         ):
             with self.subTest(command=command):
                 violations = self.scan(f"steps:\n  - run: {command}\n")
