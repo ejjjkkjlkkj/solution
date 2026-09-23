@@ -11,6 +11,7 @@ WORKFLOW_TO_GATES = {
     "Native Verification": ("native_verification",),
     "Deep Software Ceiling": ("deep_software_verification",),
     "Deep Software Gates": ("deep_regression_gates",),
+    "Independent Software Ceiling Verification": ("independent_verification",),
     "Formal Semantic Proof": ("formal_semantic_proof",),
     "Reproducibility and Provenance": ("reproducibility_and_provenance",),
     "UEFI SCT Build": ("uefi_sct_build",),
