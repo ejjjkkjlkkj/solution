@@ -1,47 +1,114 @@
 name: Deep Software Gates
-on: [push, pull_request, workflow_dispatch]
+
+on:
+  push:
+  workflow_dispatch:
+
+concurrency:
+  group: deep-software-gates-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
-  coverage-100:
+  coverage:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - run: |
-          clang -std=c11 -Wall -Wextra -Wpedantic -Werror -fprofile-instr-generate -fcoverage-mapping -Iinclude c/omni_protocol.c tests/c/test_protocol.c -o coverage_test
-          LLVM_PROFILE_FILE=coverage.profraw ./coverage_test
-          llvm-profdata merge -sparse coverage.profraw -o coverage.profdata
-          python tools/check_llvm_coverage.py ./coverage_test coverage.profdata
-  qemu-ovmf:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Critical native coverage = 100%
+        run: bash scripts/coverage_gate.sh
+
+  reproducible-wheel:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - run: sudo apt-get update && sudo apt-get install -y qemu-system-x86 ovmf
-      - shell: bash
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13"
+      - name: Install hash-locked Python build toolchain
+        run: python -m pip install --only-binary=:all: --require-hashes -r requirements-build.lock
+      - run: python -m pip check
+      - run: python scripts/reproducible_build.py
+
+  qemu-ovmf-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install QEMU and OVMF
         run: |
-          CODE="$(find /usr/share -type f \( -name 'OVMF_CODE.fd' -o -name 'OVMF_CODE_4M.fd' \) | head -1)"
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 ovmf
+      - name: Boot OVMF under TCG
+        shell: bash
+        run: |
+          set -euo pipefail
+          CODE=$(find /usr/share -iname 'OVMF_CODE.fd' | head -n1)
+          VARS_TEMPLATE=$(find /usr/share -iname 'OVMF_VARS.fd' | head -n1)
           test -n "$CODE"
+          test -n "$VARS_TEMPLATE"
+          cp "$VARS_TEMPLATE" "$RUNNER_TEMP/OVMF_VARS.fd"
           set +e
-          timeout 8s qemu-system-x86_64 -machine q35,accel=tcg -m 512 -nodefaults -display none -serial none -monitor none -drive if=pflash,format=raw,readonly=on,file="$CODE"
+          timeout 8s qemu-system-x86_64 -machine q35,smm=on,accel=tcg -m 512 -nodefaults -display none -serial none -monitor none -drive if=pflash,format=raw,readonly=on,file="$CODE" -drive if=pflash,format=raw,file="$RUNNER_TEMP/OVMF_VARS.fd"
           rc=$?
           set -e
           if [ "$rc" -ne 124 ] && [ "$rc" -ne 0 ]; then exit "$rc"; fi
-          qemu-system-x86_64 --version
-  reproducible-bundle:
-    runs-on: ubuntu-latest
+          echo "QEMU/OVMF TCG launch gate PASS"
+
+  cbmc:
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: {python-version: "3.13"}
-      - run: |
-          mkdir -p /tmp/a /tmp/b
-          python tools/deterministic_bundle.py /tmp/a/software-bundle.zip > /tmp/a/sha.txt
-          python tools/deterministic_bundle.py /tmp/b/software-bundle.zip > /tmp/b/sha.txt
-          cmp /tmp/a/software-bundle.zip /tmp/b/software-bundle.zip
-          cmp /tmp/a/sha.txt /tmp/b/sha.txt
-          python tools/build_provenance.py /tmp/a/software-bundle.zip /tmp/a/provenance.json
-      - uses: actions/upload-artifact@v4
-        with:
-          name: reproducible-software-bundle
-          path: |
-            /tmp/a/software-bundle.zip
-            /tmp/a/sha.txt
-            /tmp/a/provenance.json
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install pinned CBMC 6.11.0
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download cbmc-6.11.0 --repo diffblue/cbmc --pattern 'ubuntu-24.04-cbmc-6.11.0-Linux.deb'
+          sudo apt-get update
+          sudo apt-get install -y ./ubuntu-24.04-cbmc-6.11.0-Linux.deb
+          cbmc --version
+      - name: Prove bounded protocol invariants
+        run: >-
+          cbmc formal/cbmc_protocol.c c/omni_protocol.c
+          -I include
+          --bounds-check --pointer-check
+          --signed-overflow-check --unsigned-overflow-check
+          --div-by-zero-check --pointer-overflow-check
+
+  frama-c:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install pinned Frama-C 33
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y opam libgmp-dev graphviz patch
+          opam init --disable-sandboxing -y
+          opam switch create 5.3.0 -y
+          eval "$(opam env)"
+          opam install -y frama-c.33.0
+          frama-c -version
+      - name: Eva value analysis
+        run: |
+          eval "$(opam env)"
+          frama-c -eva -eva-precision 3 -cpp-extra-args="-Iinclude" c/omni_protocol.c
+      - name: WP/RTE must prove every generated goal
+        run: |
+          eval "$(opam env)"
+          frama-c -wp -wp-rte -cpp-extra-args="-Iinclude" c/omni_protocol.c 2>&1 | tee wp.log
+          python - <<'PY'
+          import re
+          text=open("wp.log", encoding="utf-8").read()
+          goals=re.findall(r"Proved goals:\s*(\d+)\s*/\s*(\d+)", text)
+          if not goals: raise SystemExit("No Frama-C WP proof summary found")
+          proved,total=map(int,goals[-1])
+          if proved != total: raise SystemExit(f"Frama-C WP incomplete: {proved}/{total}")
+          print(f"Frama-C WP: {proved}/{total} proved")
+          PY
+
+  all-deep-gates:
+    runs-on: ubuntu-latest
+    needs: [coverage, reproducible-wheel, qemu-ovmf-smoke, cbmc, frama-c]
+    steps:
+      - run: echo "DEEP_SOFTWARE_GATES_STRICT_PASS"
