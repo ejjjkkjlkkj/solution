@@ -7,7 +7,9 @@
 
 #define OMNI_DEBUGCON_PORT 0x402
 #define OMNI_COM1_BASE     0x3F8
-#define OMNI_EVIDENCE_FILE L"\\OMNI-EVIDENCE.TXT"
+#define OMNI_EVIDENCE_FILE  L"\\OMNI-EVIDENCE.TXT"
+#define OMNI_CHALLENGE_FILE L"\\OMNI-CHALLENGE.TXT"
+#define OMNI_CHALLENGE_HEX_LEN 64
 
 typedef struct {
   UINTN Handles;
@@ -147,11 +149,114 @@ STATIC EFI_STATUS FileWriteStat (
   return FileWriteAscii (File, "\n");
 }
 
+STATIC BOOLEAN IsHexChar (CHAR8 Ch) {
+  return (BOOLEAN)(
+    ((Ch >= '0') && (Ch <= '9')) ||
+    ((Ch >= 'a') && (Ch <= 'f')) ||
+    ((Ch >= 'A') && (Ch <= 'F'))
+    );
+}
+
+STATIC EFI_STATUS LoadChallenge (
+  EFI_HANDLE       ImageHandle,
+  EFI_SYSTEM_TABLE *SystemTable,
+  OUT CHAR8        Challenge[OMNI_CHALLENGE_HEX_LEN + 1]
+  )
+{
+  EFI_STATUS Status;
+  EFI_LOADED_IMAGE_PROTOCOL *LoadedImage;
+  EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *FileSystem;
+  EFI_FILE_PROTOCOL *Root;
+  EFI_FILE_PROTOCOL *File;
+  UINT8 Buffer[OMNI_CHALLENGE_HEX_LEN + 2];
+  UINT8 Extra;
+  UINTN Size;
+  UINTN ExtraSize;
+  UINTN Index;
+
+  if ((SystemTable == NULL) || (SystemTable->BootServices == NULL) || (Challenge == NULL)) {
+    return EFI_INVALID_PARAMETER;
+  }
+
+  LoadedImage = NULL;
+  Status = SystemTable->BootServices->HandleProtocol (
+                                      ImageHandle,
+                                      &gEfiLoadedImageProtocolGuid,
+                                      (VOID **)&LoadedImage
+                                      );
+  if (EFI_ERROR (Status) || (LoadedImage == NULL)) {
+    return EFI_NOT_FOUND;
+  }
+
+  FileSystem = NULL;
+  Status = SystemTable->BootServices->HandleProtocol (
+                                      LoadedImage->DeviceHandle,
+                                      &gEfiSimpleFileSystemProtocolGuid,
+                                      (VOID **)&FileSystem
+                                      );
+  if (EFI_ERROR (Status) || (FileSystem == NULL)) {
+    return EFI_NOT_FOUND;
+  }
+
+  Root = NULL;
+  Status = FileSystem->OpenVolume (FileSystem, &Root);
+  if (EFI_ERROR (Status) || (Root == NULL)) {
+    return Status;
+  }
+
+  File = NULL;
+  Status = Root->Open (
+                   Root,
+                   &File,
+                   OMNI_CHALLENGE_FILE,
+                   EFI_FILE_MODE_READ,
+                   0
+                   );
+  if (EFI_ERROR (Status) || (File == NULL)) {
+    Root->Close (Root);
+    return EFI_NOT_FOUND;
+  }
+
+  Size = sizeof (Buffer);
+  Status = File->Read (File, &Size, Buffer);
+  if (!EFI_ERROR (Status)) {
+    ExtraSize = 1;
+    Status = File->Read (File, &ExtraSize, &Extra);
+    if (!EFI_ERROR (Status) && (ExtraSize != 0)) {
+      Status = EFI_BAD_BUFFER_SIZE;
+    }
+  }
+
+  File->Close (File);
+  Root->Close (Root);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+
+  while ((Size != 0) && ((Buffer[Size - 1] == '\r') || (Buffer[Size - 1] == '\n'))) {
+    Size--;
+  }
+  if (Size != OMNI_CHALLENGE_HEX_LEN) {
+    return EFI_COMPROMISED_DATA;
+  }
+
+  for (Index = 0; Index < OMNI_CHALLENGE_HEX_LEN; ++Index) {
+    if (!IsHexChar ((CHAR8)Buffer[Index])) {
+      return EFI_COMPROMISED_DATA;
+    }
+    Challenge[Index] = (CHAR8)Buffer[Index];
+  }
+  Challenge[OMNI_CHALLENGE_HEX_LEN] = '\0';
+  return EFI_SUCCESS;
+}
+
 STATIC EFI_STATUS SaveEvidence (
   EFI_HANDLE          ImageHandle,
   EFI_SYSTEM_TABLE    *SystemTable,
   CONST OMNI_HII_STATS *Stats,
-  BOOLEAN             Passed
+  CONST CHAR8          *Challenge,
+  BOOLEAN              HiiPassed,
+  BOOLEAN              Passed
   )
 {
   EFI_STATUS Status;
@@ -160,7 +265,8 @@ STATIC EFI_STATUS SaveEvidence (
   EFI_FILE_PROTOCOL *Root;
   EFI_FILE_PROTOCOL *File;
 
-  if ((SystemTable == NULL) || (SystemTable->BootServices == NULL) || (Stats == NULL)) {
+  if ((SystemTable == NULL) || (SystemTable->BootServices == NULL) ||
+      (Stats == NULL) || (Challenge == NULL)) {
     return EFI_INVALID_PARAMETER;
   }
 
@@ -215,7 +321,10 @@ STATIC EFI_STATUS SaveEvidence (
     return Status;
   }
 
-  Status = FileWriteAscii (File, "OMNI_EVIDENCE_V1\n");
+  Status = FileWriteAscii (File, "OMNI_EVIDENCE_V2\n");
+  if (!EFI_ERROR (Status)) Status = FileWriteAscii (File, "OMNI_CHALLENGE=");
+  if (!EFI_ERROR (Status)) Status = FileWriteAscii (File, Challenge);
+  if (!EFI_ERROR (Status)) Status = FileWriteAscii (File, "\n");
   if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HII_HANDLES", Stats->Handles);
   if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HII_FORM_PACKAGES", Stats->FormPackages);
   if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HII_OPCODES", Stats->Opcodes);
@@ -223,7 +332,10 @@ STATIC EFI_STATUS SaveEvidence (
   if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HII_PASSWORDS", Stats->Passwords);
   if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HII_INVALID", Stats->InvalidPackages);
   if (!EFI_ERROR (Status)) {
-    Status = FileWriteAscii (File, Passed ? "OMNI_HII_PASS\nOMNI_UEFI_PASS\n" : "OMNI_HII_FAIL\nOMNI_UEFI_FAIL\n");
+    Status = FileWriteAscii (File, HiiPassed ? "OMNI_HII_PASS\n" : "OMNI_HII_FAIL\n");
+  }
+  if (!EFI_ERROR (Status)) {
+    Status = FileWriteAscii (File, Passed ? "OMNI_UEFI_PASS\n" : "OMNI_UEFI_FAIL\n");
   }
   if (!EFI_ERROR (Status)) {
     Status = File->Flush (File);
@@ -473,12 +585,18 @@ UefiMain (
   )
 {
   EFI_STATUS HiiStatus;
+  EFI_STATUS ChallengeStatus;
   EFI_STATUS EvidenceStatus;
+  BOOLEAN HiiPassed;
   BOOLEAN Passed;
+  CHAR8 Challenge[OMNI_CHALLENGE_HEX_LEN + 1] = {0};
   OMNI_HII_STATS Stats = {0};
 
   SerialInit ();
   WriteText ("OMNI_BOOT_OK\n");
+
+  ChallengeStatus = LoadChallenge (ImageHandle, SystemTable, Challenge);
+  WriteText (EFI_ERROR (ChallengeStatus) ? "OMNI_CHALLENGE_FAIL\n" : "OMNI_CHALLENGE_PASS\n");
 
   HiiStatus = ProbeHii (SystemTable, &Stats);
   WriteStat ("OMNI_HII_HANDLES", Stats.Handles);
@@ -488,19 +606,27 @@ UefiMain (
   WriteStat ("OMNI_HII_PASSWORDS", Stats.Passwords);
   WriteStat ("OMNI_HII_INVALID", Stats.InvalidPackages);
 
-  Passed = (BOOLEAN)(
+  HiiPassed = (BOOLEAN)(
     !EFI_ERROR (HiiStatus) &&
     (Stats.FormPackages != 0) &&
     (Stats.InvalidPackages == 0)
     );
+  Passed = (BOOLEAN)(!EFI_ERROR (ChallengeStatus) && HiiPassed);
 
-  if (Passed) {
+  if (HiiPassed) {
     WriteText ("OMNI_HII_PASS\n");
   } else {
     WriteText ("OMNI_HII_FAIL\n");
   }
 
-  EvidenceStatus = SaveEvidence (ImageHandle, SystemTable, &Stats, Passed);
+  EvidenceStatus = SaveEvidence (
+                     ImageHandle,
+                     SystemTable,
+                     &Stats,
+                     EFI_ERROR (ChallengeStatus) ? "INVALID" : Challenge,
+                     HiiPassed,
+                     Passed
+                     );
   if (EFI_ERROR (EvidenceStatus)) {
     WriteText ("OMNI_EVIDENCE_FAIL\n");
     Passed = FALSE;
