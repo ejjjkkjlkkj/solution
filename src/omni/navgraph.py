@@ -2,9 +2,14 @@ from __future__ import annotations
 from collections import deque
 
 def check_graph(graph: dict[str, object]) -> dict[str, object]:
-    nodes = {str(n["id"]): n for n in graph.get("nodes", [])}
+    raw_nodes = list(graph.get("nodes", []))
+    node_ids = [str(n["id"]) for n in raw_nodes]
+    nodes = {str(n["id"]): n for n in raw_nodes}
     start = str(graph.get("start", ""))
     violations = []
+    duplicate_ids = sorted({node_id for node_id in node_ids if node_ids.count(node_id) > 1})
+    for node_id in duplicate_ids:
+        violations.append({"code":"DUPLICATE_NODE_ID","node":node_id})
     if start not in nodes:
         return {"status":"FAIL","reachable":0,"nodes":len(nodes),"coverage_percent":0.0,
                 "violations":[{"code":"MISSING_START","start":start}]}
