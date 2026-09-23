@@ -133,6 +133,7 @@ jobs:
             '-m','256',
             '-display','none',
             '-serial','file:qemu-serial.log',
+            '-net','none',
             '-debugcon','file:qemu-debug.log',
             '-global','isa-debugcon.iobase=0x402',
             '-drive',"if=pflash,format=raw,readonly=on,file=$code",
@@ -147,8 +148,11 @@ jobs:
           $logs = @()
           if (Test-Path qemu-debug.log) { $logs += Get-Content qemu-debug.log -Raw }
           if (Test-Path qemu-serial.log) { $logs += Get-Content qemu-serial.log -Raw }
-          if (($logs -join [Environment]::NewLine) -notmatch 'OMNI_UEFI_PASS') {
-            throw 'QEMU UEFI proof marker missing'
+          $joined = ($logs -join [Environment]::NewLine)
+          foreach ($marker in @('OMNI_HII_PASS','OMNI_EVIDENCE_PASS','OMNI_UEFI_PASS')) {
+            if ($joined -notmatch [regex]::Escape($marker)) {
+              throw "QEMU proof marker missing: $marker"
+            }
           }
 
       - name: Execute same UEFI binary under VMware Workstation
@@ -194,7 +198,12 @@ jobs:
             Start-Sleep -Milliseconds 500
             if (Test-Path vmware-hil\serial.log) {
               $serialText = Get-Content vmware-hil\serial.log -Raw -ErrorAction SilentlyContinue
-              if ($serialText -match 'OMNI_UEFI_PASS') { $passed = $true; break }
+              if (($serialText -match 'OMNI_HII_PASS') -and
+                  ($serialText -match 'OMNI_EVIDENCE_PASS') -and
+                  ($serialText -match 'OMNI_UEFI_PASS')) {
+                $passed = $true
+                break
+              }
             }
           } while ((Get-Date) -lt $deadline)
 
