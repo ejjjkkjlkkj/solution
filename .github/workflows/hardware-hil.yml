@@ -20,14 +20,23 @@ permissions:
 jobs:
   build-uefi-artifact:
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 80
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential nasm uuid-dev acpica-tools mtools dosfstools qemu-utils gdisk
+          sudo apt-get install -y build-essential nasm uuid-dev acpica-tools mtools dosfstools gdisk \
+            ninja-build pkg-config libglib2.0-dev libpixman-1-dev zlib1g-dev \
+            python3-venv wget gnupg xz-utils
+
+      - name: Build signature-verified QEMU 11.1.1 tools
+        run: |
+          bash scripts/build_pinned_qemu.sh \
+            "$RUNNER_TEMP/qemu-system-x86_64" \
+            "$GITHUB_WORKSPACE/qemu-img.pinned" | tee qemu-build-evidence.txt
+          test -x qemu-img.pinned
 
       - name: Checkout pinned EDK II 202608
         run: |
@@ -90,8 +99,8 @@ jobs:
           sudo losetup -d "$LOOP"
           trap - EXIT
 
-          qemu-img convert -f raw -O vmdk -o subformat=monolithicSparse omni-fat.img omni-boot.vmdk
-          sha256sum OmniProbe.efi omni-challenge.txt omni-run-binding.json omni-fat.img omni-gpt.img omni-boot.vmdk OVMF_CODE.fd OVMF_VARS.fd > SHA256SUMS.txt
+          ./qemu-img.pinned convert -f raw -O vmdk -o subformat=monolithicSparse omni-fat.img omni-boot.vmdk
+          sha256sum OmniProbe.efi omni-challenge.txt omni-run-binding.json omni-fat.img omni-gpt.img omni-boot.vmdk OVMF_CODE.fd OVMF_VARS.fd qemu-img.pinned > SHA256SUMS.txt
           sha256sum -c SHA256SUMS.txt
 
       - name: Attest HIL integrity manifest
@@ -111,6 +120,8 @@ jobs:
             omni-boot.vmdk
             OVMF_CODE.fd
             OVMF_VARS.fd
+            qemu-img.pinned
+            qemu-build-evidence.txt
             SHA256SUMS.txt
 
   physical-amd:
