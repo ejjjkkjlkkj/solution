@@ -149,33 +149,67 @@ jobs:
           mmd -i omni-fat.img ::/EFI
           mmd -i omni-fat.img ::/EFI/BOOT
           mcopy -i omni-fat.img "$EFI_BIN" ::/EFI/BOOT/BOOTX64.EFI
+          cp omni-fat.img omni-rr-base.img
           cp /usr/share/OVMF/OVMF_VARS.fd OVMF_VARS.fd
       - name: Execute OmniProbe in OVMF/QEMU
         run: |
           set +e
-          timeout 30s qemu-system-x86_64             -machine q35,accel=tcg -m 256             -display none -serial none             -debugcon file:omni-debug.log             -global isa-debugcon.iobase=0x402             -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE.fd             -drive if=pflash,format=raw,file=OVMF_VARS.fd             -drive file=omni-fat.img,format=raw
+          timeout 30s qemu-system-x86_64             -machine q35,accel=tcg -m 256             -display none -serial none -net none             -debugcon file:omni-debug.log             -global isa-debugcon.iobase=0x402             -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE.fd             -drive if=pflash,format=raw,file=OVMF_VARS.fd             -drive file=omni-fat.img,format=raw
           rc=$?
           set -e
           cat omni-debug.log
+          grep -a 'OMNI_HII_PASS' omni-debug.log
+          grep -a 'OMNI_EVIDENCE_PASS' omni-debug.log
           grep -a 'OMNI_UEFI_PASS' omni-debug.log
-          test "$rc" -eq 0 -o "$rc" -eq 124
+          test "$rc" -eq 0
+          mcopy -i omni-fat.img ::OMNI-EVIDENCE.TXT omni-evidence.txt
+          grep -a 'OMNI_EVIDENCE_V1' omni-evidence.txt
+          grep -a 'OMNI_HII_PASS' omni-evidence.txt
+          grep -a 'OMNI_UEFI_PASS' omni-evidence.txt
       - name: Deterministic QEMU record/replay
         run: |
           cp /usr/share/OVMF/OVMF_VARS.fd OVMF_RR_RECORD.fd
           cp /usr/share/OVMF/OVMF_VARS.fd OVMF_RR_REPLAY.fd
+          rm -f omni.rr record-debug.log replay-debug.log
           set +e
-          timeout 30s qemu-system-x86_64             -machine q35,accel=tcg -m 256             -display none -serial none             -debugcon file:record-debug.log             -global isa-debugcon.iobase=0x402             -icount shift=auto,rr=record,rrfile=omni.rr             -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE.fd             -drive if=pflash,format=raw,file=OVMF_RR_RECORD.fd             -drive file=omni-fat.img,format=raw
+          timeout 30s qemu-system-x86_64 \
+            -machine q35,accel=tcg -m 256 \
+            -display none -serial none -net none \
+            -debugcon file:record-debug.log \
+            -global isa-debugcon.iobase=0x402 \
+            -icount shift=auto,rr=record,rrfile=omni.rr \
+            -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE.fd \
+            -drive if=pflash,format=raw,file=OVMF_RR_RECORD.fd \
+            -drive file=omni-rr-base.img,format=raw,if=none,snapshot=on,id=img-direct \
+            -drive driver=blkreplay,if=none,image=img-direct,id=img-blkreplay \
+            -device ide-hd,drive=img-blkreplay
           record_rc=$?
           set -e
           test -s omni.rr
+          grep -a 'OMNI_HII_PASS' record-debug.log
+          grep -a 'OMNI_EVIDENCE_PASS' record-debug.log
           grep -a 'OMNI_UEFI_PASS' record-debug.log
-          test "$record_rc" -eq 0 -o "$record_rc" -eq 124
+          test "$record_rc" -eq 0
+
           set +e
-          timeout 30s qemu-system-x86_64             -machine q35,accel=tcg -m 256             -display none -serial none             -debugcon file:replay-debug.log             -global isa-debugcon.iobase=0x402             -icount shift=auto,rr=replay,rrfile=omni.rr             -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE.fd             -drive if=pflash,format=raw,file=OVMF_RR_REPLAY.fd             -drive file=omni-fat.img,format=raw
+          timeout 30s qemu-system-x86_64 \
+            -machine q35,accel=tcg -m 256 \
+            -display none -serial none -net none \
+            -debugcon file:replay-debug.log \
+            -global isa-debugcon.iobase=0x402 \
+            -icount shift=auto,rr=replay,rrfile=omni.rr \
+            -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE.fd \
+            -drive if=pflash,format=raw,file=OVMF_RR_REPLAY.fd \
+            -drive file=omni-rr-base.img,format=raw,if=none,snapshot=on,id=img-direct \
+            -drive driver=blkreplay,if=none,image=img-direct,id=img-blkreplay \
+            -device ide-hd,drive=img-blkreplay
           replay_rc=$?
           set -e
+          grep -a 'OMNI_HII_PASS' replay-debug.log
+          grep -a 'OMNI_EVIDENCE_PASS' replay-debug.log
           grep -a 'OMNI_UEFI_PASS' replay-debug.log
-          test "$replay_rc" -eq 0 -o "$replay_rc" -eq 124
+          test "$replay_rc" -eq 0
+          cmp --silent record-debug.log replay-debug.log
 
   compiler-differential:
     runs-on: ubuntu-latest
