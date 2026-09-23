@@ -97,6 +97,15 @@ class ActionPinTests(unittest.TestCase):
         self.assertEqual(result["status"], "FAIL")
         self.assertEqual(result["violations"][0]["reason"], "USES_SYNTAX_UNSUPPORTED")
 
+    def test_shell_json_in_block_scalar_is_not_a_yaml_key(self):
+        result = self._verify_fixture(
+            """steps:
+  - run: |
+      echo '{"schema":"omni.test.v1"}'
+"""
+        )
+        self.assertEqual(result["status"], "PASS", result["violations"])
+
     def test_comment_uses_is_ignored(self):
         result = self._verify_fixture("# uses: actions/checkout@v4\n")
         self.assertEqual(result["status"], "PASS", result["violations"])

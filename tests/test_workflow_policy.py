@@ -65,6 +65,13 @@ class WorkflowPolicyTests(unittest.TestCase):
         violations = self.scan('steps:\n  - "u\\u0073es": actions/checkout@v4\n')
         self.assertEqual(violations[0].code, "POLICY_KEY_SYNTAX_UNSUPPORTED")
 
+    def test_shell_json_in_block_scalar_is_not_a_yaml_key(self):
+        workflow = """steps:
+  - run: |
+      echo '{"schema":"omni.test.v1"}'
+"""
+        self.assertEqual(self.scan(workflow), [])
+
     def test_local_action_is_allowed(self):
         self.assertEqual(self.scan("steps:\n  - uses: ./local-action\n"), [])
 

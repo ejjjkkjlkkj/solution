@@ -26,11 +26,9 @@ EXPLICIT_POLICY_KEY_RE = re.compile(
     re.IGNORECASE,
 )
 QUOTED_MAPPING_KEY_RE = re.compile(
-    r'''(?:^|[\[{,])\s*-?\s*(?:"(?:[^"\\]|\\.)*"|'(?:[^']|'')*')\s*:'''
+    r'''^\s*-?\s*(?:"(?:[^"\\]|\\.)*"|'(?:[^']|'')*')\s*:'''
 )
-ALIAS_MAPPING_KEY_RE = re.compile(
-    r"(?:^|[\[{,])\s*-?\s*\*[A-Za-z0-9_.-]+\s*:"
-)
+ALIAS_MAPPING_KEY_RE = re.compile(r"^\s*-?\s*\*[A-Za-z0-9_.-]+\s*:")
 GENERIC_EXPLICIT_KEY_RE = re.compile(r"^\s*\?\s+\S")
 COMMIT_REF_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 DOCKER_DIGEST_RE = re.compile(r"^docker://.+@sha256:[0-9a-fA-F]{64}$")

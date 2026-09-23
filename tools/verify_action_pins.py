@@ -20,11 +20,9 @@ EXPLICIT_USES_KEY_RE = re.compile(
     re.IGNORECASE,
 )
 QUOTED_MAPPING_KEY_RE = re.compile(
-    r'''(?:^|[\[{,])\s*-?\s*(?:"(?:[^"\\]|\\.)*"|'(?:[^']|'')*')\s*:'''
+    r'''^\s*-?\s*(?:"(?:[^"\\]|\\.)*"|'(?:[^']|'')*')\s*:'''
 )
-ALIAS_MAPPING_KEY_RE = re.compile(
-    r"(?:^|[\[{,])\s*-?\s*\*[A-Za-z0-9_.-]+\s*:"
-)
+ALIAS_MAPPING_KEY_RE = re.compile(r"^\s*-?\s*\*[A-Za-z0-9_.-]+\s*:")
 GENERIC_EXPLICIT_KEY_RE = re.compile(r"^\s*\?\s+\S")
 ACTION_REF_RE = re.compile(
     r"^([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*)@([0-9a-fA-F]{40})$"
