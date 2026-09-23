@@ -27,7 +27,7 @@ jobs:
       - name: Install toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential nasm uuid-dev mtools dosfstools qemu-utils ovmf gdisk
+          sudo apt-get install -y build-essential nasm uuid-dev acpica-tools mtools dosfstools qemu-utils gdisk
 
       - name: Checkout pinned EDK II 202608
         run: |
@@ -45,6 +45,14 @@ jobs:
           EFI_BIN="$(find Build/OmniPkg -iname OmniProbe.efi | head -1)"
           test -n "$EFI_BIN"
           cp "$EFI_BIN" "$GITHUB_WORKSPACE/OmniProbe.efi"
+
+          build -a X64 -t GCC -b RELEASE -p OvmfPkg/OvmfPkgX64.dsc
+          mapfile -t OVMF_CODE < <(find Build -type f -path '*/FV/OVMF_CODE.fd' | sort)
+          mapfile -t OVMF_VARS < <(find Build -type f -path '*/FV/OVMF_VARS.fd' | sort)
+          test "${#OVMF_CODE[@]}" -eq 1
+          test "${#OVMF_VARS[@]}" -eq 1
+          cp "${OVMF_CODE[0]}" "$GITHUB_WORKSPACE/OVMF_CODE.fd"
+          cp "${OVMF_VARS[0]}" "$GITHUB_WORKSPACE/OVMF_VARS.fd"
 
       - name: Build virtual and physical boot media
         run: |
@@ -83,8 +91,6 @@ jobs:
           trap - EXIT
 
           qemu-img convert -f raw -O vmdk -o subformat=monolithicSparse omni-fat.img omni-boot.vmdk
-          cp /usr/share/OVMF/OVMF_CODE.fd .
-          cp /usr/share/OVMF/OVMF_VARS.fd .
           sha256sum OmniProbe.efi omni-challenge.txt omni-run-binding.json omni-fat.img omni-gpt.img omni-boot.vmdk OVMF_CODE.fd OVMF_VARS.fd > SHA256SUMS.txt
           sha256sum -c SHA256SUMS.txt
 
