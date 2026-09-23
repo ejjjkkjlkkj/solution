@@ -25,13 +25,13 @@ jobs:
   build-a:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Deterministic native build A
         run: |
           export SOURCE_DATE_EPOCH=0
           clang -std=c11 -O2 -fno-ident -ffile-prefix-map="$GITHUB_WORKSPACE"=. -Wl,--build-id=none -Iinclude c/omni_protocol.c tools/protocol_probe.c -o protocol_probe
           sha256sum protocol_probe > protocol_probe.sha256
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: reproducible-a
           path: |
@@ -41,13 +41,13 @@ jobs:
   build-b:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Deterministic native build B
         run: |
           export SOURCE_DATE_EPOCH=0
           clang -std=c11 -O2 -fno-ident -ffile-prefix-map="$GITHUB_WORKSPACE"=. -Wl,--build-id=none -Iinclude c/omni_protocol.c tools/protocol_probe.c -o protocol_probe
           sha256sum protocol_probe > protocol_probe.sha256
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: reproducible-b
           path: |
@@ -58,7 +58,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install EDK II prerequisites
         run: |
           sudo apt-get update
@@ -81,7 +81,7 @@ jobs:
           test -n "$EFI_BIN"
           cp "$EFI_BIN" "$GITHUB_WORKSPACE/OmniProbe.efi"
           sha256sum "$GITHUB_WORKSPACE/OmniProbe.efi" > "$GITHUB_WORKSPACE/OmniProbe.efi.sha256"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: reproducible-uefi-a
           path: |
@@ -92,7 +92,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install EDK II prerequisites
         run: |
           sudo apt-get update
@@ -115,7 +115,7 @@ jobs:
           test -n "$EFI_BIN"
           cp "$EFI_BIN" "$GITHUB_WORKSPACE/OmniProbe.efi"
           sha256sum "$GITHUB_WORKSPACE/OmniProbe.efi" > "$GITHUB_WORKSPACE/OmniProbe.efi.sha256"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: reproducible-uefi-b
           path: |
@@ -126,19 +126,19 @@ jobs:
     runs-on: ubuntu-24.04
     needs: [build-a, build-b, uefi-build-a, uefi-build-b]
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: reproducible-a
           path: a
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: reproducible-b
           path: b
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: reproducible-uefi-a
           path: uefi-a
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: reproducible-uefi-b
           path: uefi-b
@@ -151,11 +151,11 @@ jobs:
           echo "NATIVE_REPRODUCIBLE_PASS"
           echo "UEFI_REPRODUCIBLE_PASS"
       - name: Attest native build provenance
-        uses: actions/attest@v4
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
         with:
           subject-path: a/protocol_probe
       - name: Attest UEFI build provenance
-        uses: actions/attest@v4
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
         with:
           subject-path: uefi-a/OmniProbe.efi
       - name: Verify persisted attestations
