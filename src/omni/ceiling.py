@@ -19,6 +19,7 @@ REQUIRED_SOFTWARE_GATES = frozenset(
         "native_verification",
         "deep_software_verification",
         "deep_regression_gates",
+        "independent_verification",
         "formal_semantic_proof",
         "reproducibility_and_provenance",
         "uefi_sct_build",
