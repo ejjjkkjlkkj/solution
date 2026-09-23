@@ -11,6 +11,7 @@ WORKFLOW_TO_GATES = {
     "Native Verification": ("native_verification",),
     "Deep Software Ceiling": ("deep_software_verification",),
     "IFR Parser Fuzz": ("ifr_parser_fuzz",),
+    "CI Workflow Lint": ("ci_workflow_lint",),
     "Formal Semantic Proof": ("formal_semantic_proof",),
     "Reproducibility and Provenance": ("reproducibility_and_provenance",),
     "UEFI SCT Build": ("uefi_sct_build",),

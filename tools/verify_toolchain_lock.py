@@ -10,6 +10,10 @@ ROOT = Path(__file__).resolve().parents[1]
 def verify(root: Path = ROOT) -> dict[str, object]:
     lock = json.loads((root / "toolchains.lock.json").read_text(encoding="utf-8"))
     checks = {
+        ".github/workflows/workflow-lint.yml": [
+            lock["actionlint"]["version"],
+            lock["actionlint"]["linux_amd64_sha256"],
+        ],
         ".github/workflows/deep-software-ceiling.yml": [
             lock["edk2_primary"]["tag"],
             lock["edk2_primary"]["commit"],

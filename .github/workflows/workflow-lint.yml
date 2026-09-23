@@ -1,0 +1,33 @@
+name: CI Workflow Lint
+
+on:
+  push:
+    branches:
+      - main
+      - "dev/**"
+      - "chatgpt/**"
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: workflow-lint-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  actionlint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned actionlint 1.7.12
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3             -o actionlint.tar.gz             https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
+          echo '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  actionlint.tar.gz' | sha256sum -c -
+          tar -xzf actionlint.tar.gz actionlint
+          ./actionlint -version
+      - name: Validate every GitHub Actions workflow
+        run: ./actionlint -color

@@ -21,6 +21,7 @@ REQUIRED_GATES = frozenset(
         "native_verification",
         "deep_software_verification",
         "ifr_parser_fuzz",
+        "ci_workflow_lint",
         "reproducibility_and_provenance",
         "uefi_sct_build",
         "uefi_sct_runtime_ovmf",
