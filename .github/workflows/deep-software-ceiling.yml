@@ -127,7 +127,7 @@ jobs:
         run: |
           stuart_setup -c ./.pytool/CISettings.py TOOL_CHAIN_TAG=GCC
           stuart_update -c ./.pytool/CISettings.py TOOL_CHAIN_TAG=GCC
-          stuart_ci_build -c ./.pytool/CISettings.py TOOL_CHAIN_TAG=GCC -t NOOPT -p MdePkg
+          stuart_ci_build -c ./.pytool/CISettings.py TOOL_CHAIN_TAG=GCC -t NOOPT -p MdePkg CompilerPlugin=skip
 
   uefi-qemu:
     runs-on: ubuntu-24.04
