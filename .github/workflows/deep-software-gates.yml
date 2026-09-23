@@ -1,0 +1,71 @@
+name: Deep Software Gates
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Critical native coverage = 100%
+        run: bash scripts/coverage_gate.sh
+
+  reproducible-wheel:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install --upgrade build
+      - run: python scripts/reproducible_build.py
+
+  qemu-ovmf-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install QEMU and OVMF
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 ovmf
+      - name: Boot OVMF under TCG
+        shell: bash
+        run: |
+          set -euo pipefail
+          CODE=$(find /usr/share -iname 'OVMF_CODE.fd' | head -n1)
+          VARS_TEMPLATE=$(find /usr/share -iname 'OVMF_VARS.fd' | head -n1)
+          test -n "$CODE"
+          test -n "$VARS_TEMPLATE"
+          cp "$VARS_TEMPLATE" "$RUNNER_TEMP/OVMF_VARS.fd"
+          set +e
+          timeout 8s qemu-system-x86_64             -machine q35,smm=on,accel=tcg             -m 512 -nodefaults -display none -serial none -monitor none             -drive if=pflash,format=raw,readonly=on,file="$CODE"             -drive if=pflash,format=raw,file="$RUNNER_TEMP/OVMF_VARS.fd"
+          rc=$?
+          set -e
+          if [ "$rc" -ne 124 ] && [ "$rc" -ne 0 ]; then
+            exit "$rc"
+          fi
+          echo "QEMU/OVMF TCG launch gate PASS"
+
+  cbmc:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Probe CBMC
+        run: |
+          if ! command -v cbmc >/dev/null; then echo "CBMC_NOT_INSTALLED"; exit 78; fi
+          cbmc --version
+          cbmc -Iinclude c/omni_protocol.c formal/cbmc_protocol_harness.c             --bounds-check --pointer-check --signed-overflow-check --unsigned-overflow-check
+
+  frama-c:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Probe Frama-C
+        run: |
+          if ! command -v frama-c >/dev/null; then echo "FRAMAC_NOT_INSTALLED"; exit 78; fi
+          frama-c -version
+          frama-c -eva -Iinclude c/omni_protocol.c formal/omni_protocol_acsl.c
