@@ -38,11 +38,7 @@ jobs:
               --manifest-out ceiling-manifest.json \
               --details-out ceiling-details.json
 
-            ready="$(python - <<'PY'
-import json
-print("true" if json.load(open("ceiling-details.json", encoding="utf-8"))["ready"] else "false")
-PY
-)"
+            ready="$(python -c 'import json; print("true" if json.load(open("ceiling-details.json", encoding="utf-8"))["ready"] else "false")')"
             if [ "$ready" = "true" ]; then
               break
             fi
