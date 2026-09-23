@@ -43,6 +43,7 @@ test "$(tr -d '\r\n' < "$SOURCE/VERSION")" = "$QEMU_VERSION"
 
 cd "$SOURCE"
 ./configure \
+  --disable-download \
   --target-list=x86_64-softmmu \
   --disable-docs \
   --disable-gtk \
