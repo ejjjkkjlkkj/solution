@@ -12,6 +12,10 @@ CONTINUE_RE = re.compile(r"^\s*continue-on-error:\s*true\s*(?:#.*)?$", re.IGNORE
 COMMIT_REF_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 DOCKER_DIGEST_RE = re.compile(r"^docker://.+@sha256:[0-9a-fA-F]{64}$")
 MUTABLE_RUNNER_RE = re.compile(r"(?:ubuntu|windows|macos)-latest", re.IGNORECASE)
+MUTABLE_PIP_RE = re.compile(
+    r"\\bpip\\s+install\\s+(?:(?:--upgrade\\s+)?-r\\s+\\S+|-e\\s+\\S+)",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -29,6 +33,8 @@ def inspect_file(path: pathlib.Path) -> list[Violation]:
             violations.append(Violation(str(path), number, "CONTINUE_ON_ERROR_TRUE", raw.strip()))
         if MUTABLE_RUNNER_RE.search(raw):
             violations.append(Violation(str(path), number, "MUTABLE_RUNNER_LABEL", raw.strip()))
+        if MUTABLE_PIP_RE.search(raw):
+            violations.append(Violation(str(path), number, "MUTABLE_PIP_INSTALL", raw.strip()))
 
         match = USES_RE.match(raw)
         if not match:
