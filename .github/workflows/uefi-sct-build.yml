@@ -20,9 +20,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential nasm uuid-dev python3-pip
       - name: Checkout matching EDK II
-        run: git clone --depth 1 --branch edk2-stable202508 --recurse-submodules https://github.com/tianocore/edk2.git
+        run: |
+          git clone --depth 1 --branch edk2-stable202508 --recurse-submodules https://github.com/tianocore/edk2.git
+          test "$(git -C edk2 rev-parse HEAD)" = "d46aa46c8361194521391aa581593e556c707c6e"
       - name: Checkout official edk2-test SCT
-        run: git clone --depth 1 --branch edk2-test-stable202509 https://github.com/tianocore/edk2-test.git
+        run: |
+          git clone --depth 1 --branch edk2-test-stable202509 https://github.com/tianocore/edk2-test.git
+          test "$(git -C edk2-test rev-parse HEAD)" = "2b2a16ac239cd89d778cb79ae6e42c533fc4c25a"
       - name: Assemble SCT workspace
         run: |
           cp -a edk2-test/uefi-sct/SctPkg ./SctPkg
