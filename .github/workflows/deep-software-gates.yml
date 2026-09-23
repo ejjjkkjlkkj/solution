@@ -44,35 +44,48 @@ jobs:
 
   qemu-ovmf-smoke:
     runs-on: ubuntu-24.04
+    timeout-minutes: 70
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Install QEMU and OVMF
+      - name: Install QEMU and EDK II build prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install -y qemu-system-x86 ovmf
-      - name: Boot OVMF under TCG
+          sudo apt-get install -y build-essential nasm uuid-dev acpica-tools \
+            ninja-build pkg-config libglib2.0-dev libpixman-1-dev zlib1g-dev \
+            python3-venv wget gnupg xz-utils
+      - name: Build signature-verified QEMU 11.1.1
+        run: bash scripts/build_pinned_qemu.sh "$GITHUB_WORKSPACE/qemu-system-x86_64"
+
+      - name: Checkout and build pinned OVMF
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch edk2-stable202608 --recurse-submodules https://github.com/tianocore/edk2.git
+          test "$(git -C edk2 rev-parse HEAD)" = "2970e5699ba6267f3384ffab20f96647578aebc8"
+          cd edk2
+          make -C BaseTools
+          export WORKSPACE="$PWD"
+          export PYTHON_COMMAND=python3
+          source edksetup.sh BaseTools
+          build -a X64 -t GCC -b RELEASE -p OvmfPkg/OvmfPkgX64.dsc
+          mapfile -t CODE < <(find Build -type f -path '*/FV/OVMF_CODE.fd' | sort)
+          mapfile -t VARS < <(find Build -type f -path '*/FV/OVMF_VARS.fd' | sort)
+          test "${#CODE[@]}" -eq 1
+          test "${#VARS[@]}" -eq 1
+          cp "${CODE[0]}" "$GITHUB_WORKSPACE/OVMF_CODE.pinned.fd"
+          cp "${VARS[0]}" "$GITHUB_WORKSPACE/OVMF_VARS.pinned.fd"
+      - name: Boot pinned OVMF under TCG
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -f /usr/share/OVMF/OVMF_CODE_4M.fd && -f /usr/share/OVMF/OVMF_VARS_4M.fd ]]; then
-            CODE=/usr/share/OVMF/OVMF_CODE_4M.fd
-            VARS_TEMPLATE=/usr/share/OVMF/OVMF_VARS_4M.fd
-          elif [[ -f /usr/share/OVMF/OVMF_CODE.fd && -f /usr/share/OVMF/OVMF_VARS.fd ]]; then
-            CODE=/usr/share/OVMF/OVMF_CODE.fd
-            VARS_TEMPLATE=/usr/share/OVMF/OVMF_VARS.fd
-          else
-            echo "Compatible OVMF CODE/VARS pair not found" >&2
-            exit 1
-          fi
-          cp "$VARS_TEMPLATE" "$RUNNER_TEMP/OVMF_VARS.fd"
+          cp OVMF_VARS.pinned.fd "$RUNNER_TEMP/OVMF_VARS.fd"
           set +e
-          timeout 8s qemu-system-x86_64             -machine q35,smm=on,accel=tcg             -m 512 -nodefaults -display none -serial none -monitor none             -drive if=pflash,format=raw,readonly=on,file="$CODE"             -drive if=pflash,format=raw,file="$RUNNER_TEMP/OVMF_VARS.fd"
+          timeout 8s "$GITHUB_WORKSPACE/qemu-system-x86_64"             -machine q35,smm=on,accel=tcg             -m 512 -nodefaults -display none -serial none -monitor none             -drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.pinned.fd             -drive if=pflash,format=raw,file="$RUNNER_TEMP/OVMF_VARS.fd"
           rc=$?
           set -e
           if [ "$rc" -ne 124 ] && [ "$rc" -ne 0 ]; then
             exit "$rc"
           fi
-          echo "QEMU/OVMF TCG launch gate PASS"
+          echo "QEMU/PINNED_OVMF TCG launch gate PASS"
 
   cbmc:
     runs-on: ubuntu-24.04
@@ -100,21 +113,19 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Install Frama-C prerequisites
+      - name: Install Frama-C/Alt-Ergo from pinned OPAM repository state
         run: |
           sudo apt-get update
           sudo apt-get install -y opam libgmp-dev graphviz patch
-      - name: Install pinned Frama-C 33 and Alt-Ergo
-        run: bash scripts/install_pinned_framac.sh
+          bash scripts/install_pinned_framac.sh
       - name: Eva value analysis
         run: |
-          eval "$(opam env)"
           frama-c -eva -eva-precision 3 -lib-entry -main omni_mm_validate \
             -cpp-extra-args="-Iinclude" c/omni_protocol.c
       - name: WP/RTE must prove every generated goal
         run: |
-          eval "$(opam env)"
-          frama-c -wp -wp-rte -main omni_mm_validate -lib-entry \
+          frama-c -wp -wp-rte -wp-prover alt-ergo \
+            -main omni_mm_validate -lib-entry \
             -wp-fct omni_mm_validate,omni_a11y_validate \
             -cpp-extra-args="-Iinclude" c/omni_protocol.c 2>&1 | tee wp.log
           python - <<'PY'
