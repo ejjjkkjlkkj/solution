@@ -97,7 +97,7 @@ jobs:
           if not goals:
               raise SystemExit("No Frama-C WP proof summary found")
           proved,total=map(int,goals[-1])
-          if proved != total:
+          if total == 0 or proved != total:
               raise SystemExit(f"Frama-C WP incomplete: {proved}/{total}")
           print(f"Frama-C WP: {proved}/{total} proved")
           PY
