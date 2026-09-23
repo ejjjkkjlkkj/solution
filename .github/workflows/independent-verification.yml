@@ -39,8 +39,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential nasm uuid-dev mtools dosfstools \
-            qemu-system-x86 ovmf
+            build-essential nasm uuid-dev acpica-tools mtools dosfstools \
+            qemu-system-x86
 
       - name: Checkout pinned EDK II
         run: |
@@ -62,6 +62,14 @@ jobs:
           test -n "$EFI_BIN"
           cp "$EFI_BIN" "$GITHUB_WORKSPACE/OmniProbe-independent.efi"
 
+          build -a X64 -t GCC -b RELEASE -p OvmfPkg/OvmfPkgX64.dsc
+          mapfile -t OVMF_CODE < <(find Build -type f -path '*/FV/OVMF_CODE.fd' | sort)
+          mapfile -t OVMF_VARS < <(find Build -type f -path '*/FV/OVMF_VARS.fd' | sort)
+          test "${#OVMF_CODE[@]}" -eq 1
+          test "${#OVMF_VARS[@]}" -eq 1
+          cp "${OVMF_CODE[0]}" "$GITHUB_WORKSPACE/OVMF_CODE.independent.fd"
+          cp "${OVMF_VARS[0]}" "$GITHUB_WORKSPACE/OVMF_VARS.independent.fd"
+
       - name: Build commit-bound boot image
         run: |
           set -euo pipefail
@@ -75,14 +83,6 @@ jobs:
           mmd -i omni-independent.img ::/EFI/BOOT
           mcopy -i omni-independent.img OmniProbe-independent.efi ::/EFI/BOOT/BOOTX64.EFI
           mcopy -i omni-independent.img omni-challenge.txt ::/OMNI-CHALLENGE.TXT
-
-          if [[ -f /usr/share/OVMF/OVMF_CODE.fd && -f /usr/share/OVMF/OVMF_VARS.fd ]]; then
-            cp /usr/share/OVMF/OVMF_CODE.fd OVMF_CODE.independent.fd
-            cp /usr/share/OVMF/OVMF_VARS.fd OVMF_VARS.independent.fd
-          else
-            cp /usr/share/OVMF/OVMF_CODE_4M.fd OVMF_CODE.independent.fd
-            cp /usr/share/OVMF/OVMF_VARS_4M.fd OVMF_VARS.independent.fd
-          fi
 
           sha256sum \
             OmniProbe-independent.efi omni-challenge.txt omni-independent.img \
