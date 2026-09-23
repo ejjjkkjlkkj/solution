@@ -118,6 +118,7 @@ jobs:
           set -euo pipefail
           make -C BaseTools
           export WORKSPACE="$PWD"
+          export PYTHON_COMMAND=python3
           source edksetup.sh BaseTools
           build -a X64 -t GCC -b NOOPT -p MdePkg/Test/MdePkgHostTest.dsc
       - name: Execute every declared MdePkg host test binary
@@ -168,6 +169,7 @@ jobs:
           make -C BaseTools
           export WORKSPACE="$PWD"
           export PACKAGES_PATH="$PWD:$GITHUB_WORKSPACE/firmware"
+          export PYTHON_COMMAND=python3
           source edksetup.sh BaseTools
           build -a X64 -t GCC -b RELEASE -p "$GITHUB_WORKSPACE/firmware/OmniPkg/OmniPkg.dsc"
           find Build/OmniPkg -iname OmniProbe.efi -print
