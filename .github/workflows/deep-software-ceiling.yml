@@ -157,6 +157,8 @@ jobs:
           mmd -i omni-fat.img ::/EFI
           mmd -i omni-fat.img ::/EFI/BOOT
           mcopy -i omni-fat.img "$EFI_BIN" ::/EFI/BOOT/BOOTX64.EFI
+          printf '%s' "$GITHUB_SHA" | sha256sum | awk '{print $1}' > omni-challenge.txt
+          mcopy -i omni-fat.img omni-challenge.txt ::/OMNI-CHALLENGE.TXT
           cp omni-fat.img omni-rr-base.img
           cp /usr/share/OVMF/OVMF_VARS.fd OVMF_VARS.fd
       - name: Execute OmniProbe in OVMF/QEMU
@@ -166,12 +168,15 @@ jobs:
           rc=$?
           set -e
           cat omni-debug.log
+          grep -a 'OMNI_CHALLENGE_PASS' omni-debug.log
           grep -a 'OMNI_HII_PASS' omni-debug.log
           grep -a 'OMNI_EVIDENCE_PASS' omni-debug.log
           grep -a 'OMNI_UEFI_PASS' omni-debug.log
           test "$rc" -eq 0
           mcopy -i omni-fat.img ::OMNI-EVIDENCE.TXT omni-evidence.txt
-          grep -a 'OMNI_EVIDENCE_V1' omni-evidence.txt
+          grep -a 'OMNI_EVIDENCE_V2' omni-evidence.txt
+          expected_challenge="$(cat omni-challenge.txt)"
+          grep -a "OMNI_CHALLENGE=$expected_challenge" omni-evidence.txt
           grep -a 'OMNI_HII_PASS' omni-evidence.txt
           grep -a 'OMNI_UEFI_PASS' omni-evidence.txt
       - name: Deterministic QEMU record/replay
@@ -194,6 +199,7 @@ jobs:
           record_rc=$?
           set -e
           test -s omni.rr
+          grep -a 'OMNI_CHALLENGE_PASS' record-debug.log
           grep -a 'OMNI_HII_PASS' record-debug.log
           grep -a 'OMNI_EVIDENCE_PASS' record-debug.log
           grep -a 'OMNI_UEFI_PASS' record-debug.log
@@ -213,6 +219,7 @@ jobs:
             -device ide-hd,drive=img-blkreplay
           replay_rc=$?
           set -e
+          grep -a 'OMNI_CHALLENGE_PASS' replay-debug.log
           grep -a 'OMNI_HII_PASS' replay-debug.log
           grep -a 'OMNI_EVIDENCE_PASS' replay-debug.log
           grep -a 'OMNI_UEFI_PASS' replay-debug.log
