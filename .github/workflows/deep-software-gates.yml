@@ -48,10 +48,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          CODE=$(find /usr/share -iname 'OVMF_CODE.fd' | head -n1)
-          VARS_TEMPLATE=$(find /usr/share -iname 'OVMF_VARS.fd' | head -n1)
-          test -n "$CODE"
-          test -n "$VARS_TEMPLATE"
+          if [[ -f /usr/share/OVMF/OVMF_CODE_4M.fd && -f /usr/share/OVMF/OVMF_VARS_4M.fd ]]; then
+            CODE=/usr/share/OVMF/OVMF_CODE_4M.fd
+            VARS_TEMPLATE=/usr/share/OVMF/OVMF_VARS_4M.fd
+          elif [[ -f /usr/share/OVMF/OVMF_CODE.fd && -f /usr/share/OVMF/OVMF_VARS.fd ]]; then
+            CODE=/usr/share/OVMF/OVMF_CODE.fd
+            VARS_TEMPLATE=/usr/share/OVMF/OVMF_VARS.fd
+          else
+            echo "Compatible OVMF CODE/VARS pair not found" >&2
+            exit 1
+          fi
           cp "$VARS_TEMPLATE" "$RUNNER_TEMP/OVMF_VARS.fd"
           set +e
           timeout 8s qemu-system-x86_64             -machine q35,smm=on,accel=tcg             -m 512 -nodefaults -display none -serial none -monitor none             -drive if=pflash,format=raw,readonly=on,file="$CODE"             -drive if=pflash,format=raw,file="$RUNNER_TEMP/OVMF_VARS.fd"
