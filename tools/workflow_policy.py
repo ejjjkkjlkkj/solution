@@ -25,6 +25,13 @@ EXPLICIT_POLICY_KEY_RE = re.compile(
     r"^\s*\?\s*(?:" + USES_KEY_RE + "|" + CONTINUE_KEY_RE + r")\s*$",
     re.IGNORECASE,
 )
+QUOTED_MAPPING_KEY_RE = re.compile(
+    r'''(?:^|[\[{,])\s*-?\s*(?:"(?:[^"\\]|\\.)*"|'(?:[^']|'')*')\s*:'''
+)
+ALIAS_MAPPING_KEY_RE = re.compile(
+    r"(?:^|[\[{,])\s*-?\s*\*[A-Za-z0-9_.-]+\s*:"
+)
+GENERIC_EXPLICIT_KEY_RE = re.compile(r"^\s*\?\s+\S")
 COMMIT_REF_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 DOCKER_DIGEST_RE = re.compile(r"^docker://.+@sha256:[0-9a-fA-F]{64}$")
 MUTABLE_RUNNER_RE = re.compile(r"(?:ubuntu|windows|macos)-latest", re.IGNORECASE)
@@ -66,6 +73,21 @@ def inspect_file(path: pathlib.Path) -> list[Violation]:
     for index, raw in enumerate(lines):
         number = index + 1
         active = _strip_unquoted_comment(raw)
+
+        if (
+            QUOTED_MAPPING_KEY_RE.search(active)
+            or ALIAS_MAPPING_KEY_RE.search(active)
+            or GENERIC_EXPLICIT_KEY_RE.search(active)
+        ):
+            violations.append(
+                Violation(
+                    str(path),
+                    number,
+                    "POLICY_KEY_SYNTAX_UNSUPPORTED",
+                    active.strip(),
+                )
+            )
+            continue
 
         if EXPLICIT_POLICY_KEY_RE.match(active):
             violations.append(
@@ -151,7 +173,7 @@ def main() -> int:
         return 2
 
     result = {
-        "schema": "omni.workflow-policy.v3",
+        "schema": "omni.workflow-policy.v4",
         "status": "PASS" if not violations else "FAIL",
         "violations": [v.__dict__ for v in violations],
     }

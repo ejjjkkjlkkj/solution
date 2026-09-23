@@ -45,14 +45,24 @@ class WorkflowPolicyTests(unittest.TestCase):
 
     def test_quoted_uses_key_is_enforced(self):
         violations = self.scan('steps:\n  - "uses": actions/checkout@v4\n')
-        self.assertEqual(violations[0].code, "ACTION_NOT_COMMIT_PINNED")
+        self.assertEqual(violations[0].code, "POLICY_KEY_SYNTAX_UNSUPPORTED")
 
     def test_quoted_continue_on_error_key_is_enforced(self):
         violations = self.scan("jobs:\n  x:\n    'continue-on-error': true\n")
-        self.assertEqual(violations[0].code, "CONTINUE_ON_ERROR_TRUE")
+        self.assertEqual(violations[0].code, "POLICY_KEY_SYNTAX_UNSUPPORTED")
 
     def test_explicit_policy_key_is_rejected_fail_closed(self):
         violations = self.scan("? uses\n: actions/checkout@v4\n")
+        self.assertEqual(violations[0].code, "POLICY_KEY_SYNTAX_UNSUPPORTED")
+
+    def test_alias_mapping_key_is_rejected_fail_closed(self):
+        violations = self.scan(
+            "policy_key: &policy_key uses\nsteps:\n  - *policy_key: actions/checkout@v4\n"
+        )
+        self.assertEqual(violations[0].code, "POLICY_KEY_SYNTAX_UNSUPPORTED")
+
+    def test_escaped_quoted_mapping_key_is_rejected_fail_closed(self):
+        violations = self.scan('steps:\n  - "u\\u0073es": actions/checkout@v4\n')
         self.assertEqual(violations[0].code, "POLICY_KEY_SYNTAX_UNSUPPORTED")
 
     def test_local_action_is_allowed(self):

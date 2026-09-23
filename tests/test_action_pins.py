@@ -71,11 +71,27 @@ class ActionPinTests(unittest.TestCase):
             {"checkout": "a" * 40},
         )
         self.assertEqual(result["status"], "FAIL")
-        self.assertEqual(result["violations"][0]["reason"], "ACTION_NOT_SHA_PINNED")
+        self.assertEqual(result["violations"][0]["reason"], "USES_SYNTAX_UNSUPPORTED")
 
     def test_explicit_uses_key_is_rejected_fail_closed(self):
         result = self._verify_fixture(
             "? uses\n: actions/checkout@v4\n",
+            {"checkout": "a" * 40},
+        )
+        self.assertEqual(result["status"], "FAIL")
+        self.assertEqual(result["violations"][0]["reason"], "USES_SYNTAX_UNSUPPORTED")
+
+    def test_alias_mapping_key_is_rejected_fail_closed(self):
+        result = self._verify_fixture(
+            "policy_key: &policy_key uses\nsteps:\n  - *policy_key: actions/checkout@v4\n",
+            {"checkout": "a" * 40},
+        )
+        self.assertEqual(result["status"], "FAIL")
+        self.assertEqual(result["violations"][0]["reason"], "USES_SYNTAX_UNSUPPORTED")
+
+    def test_escaped_quoted_mapping_key_is_rejected_fail_closed(self):
+        result = self._verify_fixture(
+            'steps:\n  - "u\\u0073es": actions/checkout@v4\n',
             {"checkout": "a" * 40},
         )
         self.assertEqual(result["status"], "FAIL")
