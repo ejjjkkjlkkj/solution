@@ -75,26 +75,17 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Install Frama-C 33 through opam
+      - name: Install Frama-C/Alt-Ergo from pinned OPAM repository state
         run: |
           sudo apt-get update
-          sudo apt-get install -y opam libgmp-dev graphviz patch graphviz
-          opam init --disable-sandboxing -y
-          opam switch create 5.3.0 -y
-          eval "$(opam env)"
-          opam install -y frama-c.33.0
-          frama-c -version
+          sudo apt-get install -y opam libgmp-dev graphviz patch
+          bash scripts/install_pinned_framac.sh
       - name: Eva value analysis
         run: |
-          eval "$(opam env)"
-          frama-c -eva -eva-precision 3 -lib-entry -main omni_mm_validate \
-            -cpp-extra-args="-Iinclude" c/omni_protocol.c
+          frama-c -eva -eva-precision 3 -cpp-extra-args="-Iinclude" c/omni_protocol.c
       - name: WP/RTE proof obligations
         run: |
-          eval "$(opam env)"
-          frama-c -wp -wp-rte -main omni_mm_validate -lib-entry \
-            -wp-fct omni_mm_validate,omni_a11y_validate \
-            -cpp-extra-args="-Iinclude" c/omni_protocol.c 2>&1 | tee wp.log
+          frama-c -wp -wp-rte -wp-prover alt-ergo -cpp-extra-args="-Iinclude" c/omni_protocol.c 2>&1 | tee wp.log
           python - <<'PY'
           import re
           text=open("wp.log", encoding="utf-8").read()
@@ -118,26 +109,56 @@ jobs:
       - name: Install prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential gcc-multilib g++-multilib lcov nasm uuid-dev mono-complete ca-certificates-mono
-          python3 -m pip install --upgrade -r edk2/pip-requirements.txt
-      - name: Run official MdePkg host tests with ASan enabled
+          sudo apt-get install -y build-essential gcc-multilib g++-multilib lcov nasm uuid-dev
+      - name: Build official MdePkg host tests directly from pinned EDK II
         working-directory: edk2
         env:
           ASAN_OPTIONS: detect_leaks=0
         run: |
-          stuart_setup -c ./.pytool/CISettings.py TOOL_CHAIN_TAG=GCC
-          stuart_update -c ./.pytool/CISettings.py TOOL_CHAIN_TAG=GCC
-          stuart_ci_build -c ./.pytool/CISettings.py TOOL_CHAIN_TAG=GCC -t NOOPT -p MdePkg CompilerPlugin=skip
+          set -euo pipefail
+          make -C BaseTools
+          export WORKSPACE="$PWD"
+          export PYTHON_COMMAND=python3
+          source edksetup.sh BaseTools
+          build -a X64 -t GCC -b NOOPT -p MdePkg/Test/MdePkgHostTest.dsc
+      - name: Execute every declared MdePkg host test binary
+        working-directory: edk2
+        env:
+          ASAN_OPTIONS: detect_leaks=0
+        run: |
+          set -euo pipefail
+          names=(
+            TestBaseSafeIntLibHost
+            BaseLibUnitTestsHost
+            GoogleTestBaseSafeIntLib
+            TestDevicePathLibHost
+            GoogleTestBaseLib
+          )
+          for name in "${names[@]}"; do
+            mapfile -t matches < <(find Build/MdePkg/HostTest -type f -perm -111 -name "$name" | sort)
+            if [[ "${#matches[@]}" -ne 1 ]]; then
+              printf 'expected exactly one executable %s, found %s\n' "$name" "${#matches[@]}" >&2
+              printf '%s\n' "${matches[@]}" >&2
+              exit 1
+            fi
+            echo "RUNNING_HOST_TEST=$name"
+            "${matches[0]}"
+          done
+          echo "EDK2_MDEPKG_HOST_TESTS_DIRECT_PASS"
 
   uefi-qemu:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 80
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Install QEMU/OVMF and EDK II prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential nasm uuid-dev qemu-system-x86 ovmf mtools dosfstools
+          sudo apt-get install -y build-essential nasm uuid-dev acpica-tools mtools dosfstools \
+            ninja-build pkg-config libglib2.0-dev libpixman-1-dev zlib1g-dev \
+            python3-venv wget gnupg xz-utils
+      - name: Build signature-verified QEMU 11.1.1
+        run: bash scripts/build_pinned_qemu.sh "$GITHUB_WORKSPACE/qemu-system-x86_64"
       - name: Checkout EDK II stable 202608
         run: |
           git clone --depth 1 --branch edk2-stable202608 --recurse-submodules https://github.com/tianocore/edk2.git
@@ -145,13 +166,20 @@ jobs:
       - name: Build OmniProbe.efi with real EDK II
         run: |
           cd edk2
-
           make -C BaseTools
           export WORKSPACE="$PWD"
           export PACKAGES_PATH="$PWD:$GITHUB_WORKSPACE/firmware"
+          export PYTHON_COMMAND=python3
           source edksetup.sh BaseTools
           build -a X64 -t GCC -b RELEASE -p "$GITHUB_WORKSPACE/firmware/OmniPkg/OmniPkg.dsc"
           find Build/OmniPkg -iname OmniProbe.efi -print
+          build -a X64 -t GCC -b RELEASE -p OvmfPkg/OvmfPkgX64.dsc
+          mapfile -t OVMF_CODE < <(find Build -type f -path '*/FV/OVMF_CODE.fd' | sort)
+          mapfile -t OVMF_VARS < <(find Build -type f -path '*/FV/OVMF_VARS.fd' | sort)
+          test "${#OVMF_CODE[@]}" -eq 1
+          test "${#OVMF_VARS[@]}" -eq 1
+          cp "${OVMF_CODE[0]}" "$GITHUB_WORKSPACE/OVMF_CODE.pinned.fd"
+          cp "${OVMF_VARS[0]}" "$GITHUB_WORKSPACE/OVMF_VARS.pinned.fd"
       - name: Build bootable FAT image
         run: |
           EFI_BIN="$(find edk2/Build/OmniPkg -iname OmniProbe.efi | head -1)"
@@ -164,20 +192,11 @@ jobs:
           printf '%s' "$GITHUB_SHA" | sha256sum | awk '{print $1}' > omni-challenge.txt
           mcopy -i omni-fat.img omni-challenge.txt ::/OMNI-CHALLENGE.TXT
           cp omni-fat.img omni-rr-base.img
-          if [[ -f /usr/share/OVMF/OVMF_CODE_4M.fd && -f /usr/share/OVMF/OVMF_VARS_4M.fd ]]; then
-            cp /usr/share/OVMF/OVMF_CODE_4M.fd OVMF_CODE.fd
-            cp /usr/share/OVMF/OVMF_VARS_4M.fd OVMF_VARS.fd
-          elif [[ -f /usr/share/OVMF/OVMF_CODE.fd && -f /usr/share/OVMF/OVMF_VARS.fd ]]; then
-            cp /usr/share/OVMF/OVMF_CODE.fd OVMF_CODE.fd
-            cp /usr/share/OVMF/OVMF_VARS.fd OVMF_VARS.fd
-          else
-            echo "Compatible OVMF CODE/VARS pair not found" >&2
-            exit 1
-          fi
+          cp OVMF_VARS.pinned.fd OVMF_VARS.fd
       - name: Execute OmniProbe in OVMF/QEMU
         run: |
           set +e
-          timeout 30s qemu-system-x86_64             -machine q35,accel=tcg -m 256             -display none -serial none -net none             -debugcon file:omni-debug.log             -global isa-debugcon.iobase=0x402             -drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.fd             -drive if=pflash,format=raw,file=OVMF_VARS.fd             -drive file=omni-fat.img,format=raw
+          timeout 30s "$GITHUB_WORKSPACE/qemu-system-x86_64"             -machine q35,accel=tcg -m 256             -display none -serial none -net none             -debugcon file:omni-debug.log             -global isa-debugcon.iobase=0x402             -drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.pinned.fd             -drive if=pflash,format=raw,file=OVMF_VARS.fd             -drive file=omni-fat.img,format=raw
           rc=$?
           set -e
           cat omni-debug.log
@@ -194,17 +213,17 @@ jobs:
           grep -a 'OMNI_UEFI_PASS' omni-evidence.txt
       - name: Deterministic QEMU record/replay
         run: |
-          cp OVMF_VARS.fd OVMF_RR_RECORD.fd
-          cp OVMF_VARS.fd OVMF_RR_REPLAY.fd
+          cp OVMF_VARS.pinned.fd OVMF_RR_RECORD.fd
+          cp OVMF_VARS.pinned.fd OVMF_RR_REPLAY.fd
           rm -f omni.rr record-debug.log replay-debug.log
           set +e
-          timeout 30s qemu-system-x86_64 \
+          timeout 30s "$GITHUB_WORKSPACE/qemu-system-x86_64" \
             -machine q35,accel=tcg -m 256 \
             -display none -serial none -net none \
             -debugcon file:record-debug.log \
             -global isa-debugcon.iobase=0x402 \
             -icount shift=auto,rr=record,rrfile=omni.rr \
-            -drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.fd \
+            -drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.pinned.fd \
             -drive if=pflash,format=raw,file=OVMF_RR_RECORD.fd \
             -drive file=omni-rr-base.img,format=raw,if=none,snapshot=on,id=img-direct \
             -drive driver=blkreplay,if=none,image=img-direct,id=img-blkreplay \
@@ -219,13 +238,13 @@ jobs:
           test "$record_rc" -eq 0
 
           set +e
-          timeout 30s qemu-system-x86_64 \
+          timeout 30s "$GITHUB_WORKSPACE/qemu-system-x86_64" \
             -machine q35,accel=tcg -m 256 \
             -display none -serial none -net none \
             -debugcon file:replay-debug.log \
             -global isa-debugcon.iobase=0x402 \
             -icount shift=auto,rr=replay,rrfile=omni.rr \
-            -drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.fd \
+            -drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.pinned.fd \
             -drive if=pflash,format=raw,file=OVMF_RR_REPLAY.fd \
             -drive file=omni-rr-base.img,format=raw,if=none,snapshot=on,id=img-direct \
             -drive driver=blkreplay,if=none,image=img-direct,id=img-blkreplay \
