@@ -38,13 +38,18 @@ jobs:
 
   qemu-ovmf-smoke:
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 70
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Install QEMU and EDK II build prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install -y qemu-system-x86 build-essential nasm uuid-dev acpica-tools
+          sudo apt-get install -y build-essential nasm uuid-dev acpica-tools \
+            ninja-build pkg-config libglib2.0-dev libpixman-1-dev zlib1g-dev \
+            python3-venv wget gnupg xz-utils
+      - name: Build signature-verified QEMU 11.1.1
+        run: bash scripts/build_pinned_qemu.sh "$GITHUB_WORKSPACE/qemu-system-x86_64"
+
       - name: Checkout and build pinned OVMF
         run: |
           set -euo pipefail
@@ -67,7 +72,7 @@ jobs:
           set -euo pipefail
           cp OVMF_VARS.pinned.fd "$RUNNER_TEMP/OVMF_VARS.fd"
           set +e
-          timeout 8s qemu-system-x86_64             -machine q35,smm=on,accel=tcg             -m 512 -nodefaults -display none -serial none -monitor none             -drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.pinned.fd             -drive if=pflash,format=raw,file="$RUNNER_TEMP/OVMF_VARS.fd"
+          timeout 8s "$GITHUB_WORKSPACE/qemu-system-x86_64"             -machine q35,smm=on,accel=tcg             -m 512 -nodefaults -display none -serial none -monitor none             -drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.pinned.fd             -drive if=pflash,format=raw,file="$RUNNER_TEMP/OVMF_VARS.fd"
           rc=$?
           set -e
           if [ "$rc" -ne 124 ] && [ "$rc" -ne 0 ]; then
