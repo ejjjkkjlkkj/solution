@@ -189,6 +189,53 @@ class CiCeilingManifestTests(unittest.TestCase):
             "SOFTWARE_CEILING_PASS",
         )
 
+    def test_cancelled_duplicate_does_not_erase_same_sha_success(self):
+        runs = [
+            self.make_run(name, run_number=i + 1)
+            for i, name in enumerate(WORKFLOW_TO_GATES)
+        ]
+        target = next(iter(WORKFLOW_TO_GATES))
+        successful_run = next(run for run in runs if run["name"] == target)
+        runs.append(
+            self.make_run(
+                target,
+                run_number=500,
+                status="completed",
+                conclusion="cancelled",
+            )
+        )
+
+        manifest, details = build({"workflow_runs": runs}, self.SHA)
+        self.assertTrue(details["ready"])
+        self.assertEqual(
+            details["workflows"][target]["run_number"],
+            successful_run["run_number"],
+        )
+        self.assertEqual(evaluate(manifest)["status"], "SOFTWARE_CEILING_PASS")
+
+    def test_in_progress_duplicate_still_blocks_older_success(self):
+        runs = [
+            self.make_run(name, run_number=i + 1)
+            for i, name in enumerate(WORKFLOW_TO_GATES)
+        ]
+        target = next(iter(WORKFLOW_TO_GATES))
+        runs.append(
+            self.make_run(
+                target,
+                run_number=501,
+                status="in_progress",
+                conclusion=None,
+            )
+        )
+
+        manifest, details = build({"workflow_runs": runs}, self.SHA)
+        self.assertFalse(details["ready"])
+        self.assertEqual(details["workflows"][target]["run_number"], 501)
+        self.assertNotEqual(
+            evaluate(manifest)["status"],
+            "SOFTWARE_CEILING_PASS",
+        )
+
     def test_malformed_runs_payload_fails_closed(self):
         manifest, details = build({"workflow_runs": "not-a-list"}, self.SHA)
         self.assertFalse(details["ready"])
