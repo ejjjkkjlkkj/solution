@@ -23,7 +23,7 @@ jobs:
       - name: Install toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential nasm uuid-dev mtools dosfstools qemu-utils ovmf
+          sudo apt-get install -y build-essential nasm uuid-dev mtools dosfstools qemu-utils ovmf gdisk
       - name: Checkout EDK II 202608
         run: |
           git clone --depth 1 --branch edk2-stable202608 --recurse-submodules https://github.com/tianocore/edk2.git
@@ -47,16 +47,38 @@ jobs:
           mmd -i omni-fat.img ::/EFI
           mmd -i omni-fat.img ::/EFI/BOOT
           mcopy -i omni-fat.img OmniProbe.efi ::/EFI/BOOT/BOOTX64.EFI
+
+          # Physical removable-media image: GPT + EFI System Partition.
+          truncate -s 128M omni-gpt.img
+          sudo sgdisk --zap-all omni-gpt.img
+          sudo sgdisk --new=1:2048:0 --typecode=1:EF00 --change-name=1:OMNI-ESP omni-gpt.img
+          LOOP="$(sudo losetup --find --show --partscan omni-gpt.img)"
+          cleanup_loop() {
+            sudo umount /mnt/omni-esp 2>/dev/null || true
+            sudo losetup -d "$LOOP" 2>/dev/null || true
+          }
+          trap cleanup_loop EXIT
+          sudo mkfs.vfat -F 32 -n OMNI "${LOOP}p1"
+          sudo mkdir -p /mnt/omni-esp
+          sudo mount "${LOOP}p1" /mnt/omni-esp
+          sudo mkdir -p /mnt/omni-esp/EFI/BOOT
+          sudo cp OmniProbe.efi /mnt/omni-esp/EFI/BOOT/BOOTX64.EFI
+          sync
+          sudo umount /mnt/omni-esp
+          sudo losetup -d "$LOOP"
+          trap - EXIT
+
           qemu-img convert -f raw -O vmdk -o subformat=monolithicSparse omni-fat.img omni-boot.vmdk
           cp /usr/share/OVMF/OVMF_CODE.fd .
           cp /usr/share/OVMF/OVMF_VARS.fd .
-          sha256sum OmniProbe.efi omni-fat.img omni-boot.vmdk OVMF_CODE.fd OVMF_VARS.fd > SHA256SUMS.txt
+          sha256sum OmniProbe.efi omni-fat.img omni-gpt.img omni-boot.vmdk OVMF_CODE.fd OVMF_VARS.fd > SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
           name: omni-uefi-hil
           path: |
             OmniProbe.efi
             omni-fat.img
+            omni-gpt.img
             omni-boot.vmdk
             OVMF_CODE.fd
             OVMF_VARS.fd
