@@ -15,29 +15,22 @@ WORKFLOW_TO_GATES = {
     "Reproducibility and Provenance": ("reproducibility_and_provenance",),
     "UEFI SCT Build": ("uefi_sct_build",),
     "UEFI SCT Runtime": ("uefi_sct_runtime_ovmf",),
+}
+HARDWARE_WORKFLOW_TO_GATES = {
     "Physical AMD HIL": ("windows_qemu_hil", "windows_vmware_hil"),
 }
 
-
 def _latest_run(runs: list[dict[str, Any]], name: str, head_sha: str) -> dict[str, Any] | None:
-    candidates = [
-        run
-        for run in runs
-        if run.get("name") == name
-        and run.get("head_sha") == head_sha
-        and run.get("event") == "push"
-    ]
+    candidates = [run for run in runs if run.get("name") == name and run.get("head_sha") == head_sha and run.get("event") == "push"]
     if not candidates:
         return None
     return max(candidates, key=lambda run: (int(run.get("run_number") or 0), str(run.get("created_at") or "")))
 
-
-def build(runs_payload: dict[str, Any], head_sha: str) -> tuple[dict[str, str], dict[str, Any]]:
+def build_for_mapping(runs_payload: dict[str, Any], head_sha: str, mapping: dict[str, tuple[str, ...]]) -> tuple[dict[str, str], dict[str, Any]]:
     runs = list(runs_payload.get("workflow_runs") or [])
     manifest: dict[str, str] = {}
     details: dict[str, Any] = {"head_sha": head_sha, "workflows": {}, "ready": True}
-
-    for workflow, gates in WORKFLOW_TO_GATES.items():
+    for workflow, gates in mapping.items():
         run = _latest_run(runs, workflow, head_sha)
         if run is None:
             status = "MISSING"
@@ -62,9 +55,13 @@ def build(runs_payload: dict[str, Any], head_sha: str) -> tuple[dict[str, str], 
             }
         for gate in gates:
             manifest[gate] = status
-
     return manifest, details
 
+def build(runs_payload: dict[str, Any], head_sha: str) -> tuple[dict[str, str], dict[str, Any]]:
+    return build_for_mapping(runs_payload, head_sha, WORKFLOW_TO_GATES)
+
+def build_hardware(runs_payload: dict[str, Any], head_sha: str) -> tuple[dict[str, str], dict[str, Any]]:
+    return build_for_mapping(runs_payload, head_sha, HARDWARE_WORKFLOW_TO_GATES)
 
 def main() -> int:
     ap = argparse.ArgumentParser()
@@ -73,14 +70,12 @@ def main() -> int:
     ap.add_argument("--manifest-out", type=Path, required=True)
     ap.add_argument("--details-out", type=Path, required=True)
     ns = ap.parse_args()
-
     payload = json.loads(ns.runs_json.read_text(encoding="utf-8"))
     manifest, details = build(payload, ns.head_sha)
     ns.manifest_out.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     ns.details_out.write_text(json.dumps(details, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps({"manifest": manifest, "details": details}, indent=2, sort_keys=True))
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())
