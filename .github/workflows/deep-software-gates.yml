@@ -55,16 +55,17 @@ jobs:
             python3-venv wget gnupg xz-utils
       - name: Build signature-verified QEMU 11.1.1
         run: bash scripts/build_pinned_qemu.sh "$GITHUB_WORKSPACE/qemu-system-x86_64"
-
       - name: Checkout and build pinned OVMF
         run: |
           set -euo pipefail
           git clone --depth 1 --branch edk2-stable202608 --recurse-submodules https://github.com/tianocore/edk2.git
           test "$(git -C edk2 rev-parse HEAD)" = "2970e5699ba6267f3384ffab20f96647578aebc8"
-          cd edk2
-          make -C BaseTools
-          export WORKSPACE="$PWD"
+          export WORKSPACE="$GITHUB_WORKSPACE/edk2"
+          export EDK_TOOLS_PATH="$WORKSPACE/BaseTools"
           export PYTHON_COMMAND=python3
+          make -C "$EDK_TOOLS_PATH"
+          export PACKAGES_PATH="$WORKSPACE"
+          cd "$WORKSPACE"
           source edksetup.sh BaseTools
           build -a X64 -t GCC -b RELEASE -p OvmfPkg/OvmfPkgX64.dsc
           mapfile -t CODE < <(find Build -type f -path '*/FV/OVMF_CODE.fd' | sort)
@@ -79,7 +80,11 @@ jobs:
           set -euo pipefail
           cp OVMF_VARS.pinned.fd "$RUNNER_TEMP/OVMF_VARS.fd"
           set +e
-          timeout 8s "$GITHUB_WORKSPACE/qemu-system-x86_64"             -machine q35,smm=on,accel=tcg             -m 512 -nodefaults -display none -serial none -monitor none             -drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.pinned.fd             -drive if=pflash,format=raw,file="$RUNNER_TEMP/OVMF_VARS.fd"
+          timeout 8s "$GITHUB_WORKSPACE/qemu-system-x86_64" \
+            -machine q35,smm=on,accel=tcg -m 512 -nodefaults \
+            -display none -serial none -monitor none \
+            -drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.pinned.fd \
+            -drive if=pflash,format=raw,file="$RUNNER_TEMP/OVMF_VARS.fd"
           rc=$?
           set -e
           if [ "$rc" -ne 124 ] && [ "$rc" -ne 0 ]; then
@@ -95,7 +100,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release download cbmc-6.11.0 --repo diffblue/cbmc             --pattern 'ubuntu-24.04-cbmc-6.11.0-Linux.deb'
+          gh release download cbmc-6.11.0 --repo diffblue/cbmc \
+            --pattern 'ubuntu-24.04-cbmc-6.11.0-Linux.deb'
           echo "b3721aa541038384d7801ea3aeabbcddc3e8845ac8f1cbff637cf8dec7481ac8  ubuntu-24.04-cbmc-6.11.0-Linux.deb" | sha256sum -c -
           sudo apt-get update
           sudo apt-get install -y ./ubuntu-24.04-cbmc-6.11.0-Linux.deb
@@ -130,11 +136,11 @@ jobs:
             -cpp-extra-args="-Iinclude" c/omni_protocol.c 2>&1 | tee wp.log
           python - <<'PY'
           import re
-          text=open("wp.log", encoding="utf-8").read()
-          goals=re.findall(r"Proved goals:\s*(\d+)\s*/\s*(\d+)", text)
+          text = open("wp.log", encoding="utf-8").read()
+          goals = re.findall(r"Proved goals:\s*(\d+)\s*/\s*(\d+)", text)
           if not goals:
               raise SystemExit("No Frama-C WP proof summary found")
-          proved,total=map(int,goals[-1])
+          proved, total = map(int, goals[-1])
           if total == 0 or proved != total:
               raise SystemExit(f"Frama-C WP incomplete: {proved}/{total}")
           print(f"Frama-C WP: {proved}/{total} proved")
