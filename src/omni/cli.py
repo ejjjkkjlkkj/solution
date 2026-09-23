@@ -10,8 +10,7 @@ from . import ceiling, firmware, ifr
 def main() -> int:
     parser = argparse.ArgumentParser(prog="omni")
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("toolchain")
-    sub.add_parser("hardware-boundary")
+    sub.add_parser("toolchain")\n    sub.add_parser("hardware-boundary")
 
     fw = sub.add_parser("firmware-inspect")
     fw.add_argument("image")
@@ -26,9 +25,6 @@ def main() -> int:
 
     if args.command == "toolchain":
         print(json.dumps(ceiling.probe(), indent=2))
-        return 0
-    if args.command == "hardware-boundary":
-        print(json.dumps(ceiling.hardware_boundary(), indent=2, sort_keys=True))
         return 0
     if args.command == "firmware-inspect":
         print(json.dumps(firmware.inspect(args.image), indent=2))

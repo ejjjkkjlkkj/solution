@@ -38,27 +38,25 @@ def verify(root: Path = ROOT) -> dict[str, object]:
             lock["sct"]["commit"],
         ],
     }
-
-    missing: list[dict[str, str]] = []
-    for relative, needles in checks.items():
-        text = (root / relative).read_text(encoding="utf-8")
+    missing=[]
+    for relative,needles in checks.items():
+        text=(root/relative).read_text(encoding="utf-8")
         for needle in needles:
             if needle not in text:
-                missing.append({"file": relative, "value": needle})
-
+                missing.append({"file":relative,"value":needle})
     return {
-        "schema": "omniexec.toolchain-lock-verification.v1",
-        "status": "PASS" if not missing else "FAIL",
-        "missing": missing,
-        "checked_files": sorted(checks),
+        "schema":"omniexec.toolchain-lock-verification.v1",
+        "status":"PASS" if not missing else "FAIL",
+        "missing":missing,
+        "checked_files":sorted(checks),
     }
 
 
 def main() -> int:
-    result = verify()
-    print(json.dumps(result, indent=2, sort_keys=True))
-    return 0 if result["status"] == "PASS" else 1
+    result=verify()
+    print(json.dumps(result,indent=2,sort_keys=True))
+    return 0 if result["status"]=="PASS" else 1
 
 
-if __name__ == "__main__":
+if __name__=="__main__":
     raise SystemExit(main())

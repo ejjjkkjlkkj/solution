@@ -29,6 +29,22 @@ REQUIRED_GATES = frozenset(
     }
 )
 
+ALLOWED_STATUSES = frozenset(
+    {
+        "PASS",
+        "FAIL",
+        "FAILURE",
+        "NOT_RUN",
+        "MISSING",
+        "CANCELLED",
+        "SKIPPED",
+        "TIMED_OUT",
+        "NEUTRAL",
+        "ACTION_REQUIRED",
+        "STALE",
+    }
+)
+
 # Once every software gate is closed, uncertainty is allowed to remain only
 # in phenomena that intrinsically require the physical target.
 HARDWARE_ONLY_GATES = frozenset(
@@ -45,14 +61,6 @@ HARDWARE_ONLY_GATES = frozenset(
 )
 
 
-def hardware_boundary() -> dict[str, object]:
-    return {
-        "status": "HARDWARE_ONLY",
-        "software_changes_allowed": False,
-        "remaining": sorted(HARDWARE_ONLY_GATES),
-    }
-
-
 def probe() -> dict[str, str | None]:
     return {
         name: next(
@@ -63,20 +71,44 @@ def probe() -> dict[str, str | None]:
     }
 
 
+def hardware_boundary() -> dict[str, object]:
+    return {
+        "status": "HARDWARE_ONLY",
+        "remaining": sorted(HARDWARE_ONLY_GATES),
+    }
+
+
 def evaluate(statuses: Mapping[str, str]) -> dict[str, object]:
-    normalized = {str(name): str(status).upper() for name, status in statuses.items()}
+    if not isinstance(statuses, Mapping):
+        raise ValueError("software ceiling statuses must be a mapping")
+
+    normalized: dict[str, str] = {}
+    invalid: list[str] = []
+    for name, status in statuses.items():
+        if not isinstance(name, str) or not isinstance(status, str):
+            raise ValueError("software ceiling gate names and statuses must be strings")
+        normalized[name] = status
+        if status not in ALLOWED_STATUSES:
+            invalid.append(name)
+
+    unexpected = sorted(set(normalized) - REQUIRED_GATES)
     missing = sorted(REQUIRED_GATES - normalized.keys())
     failed = sorted(
         name
         for name in REQUIRED_GATES & normalized.keys()
-        if normalized[name] != "PASS"
+        if name not in invalid and normalized[name] != "PASS"
     )
-    blockers = sorted(set(missing) | set(failed))
+    invalid = sorted(invalid)
+    blockers = sorted(set(missing) | set(failed) | set(invalid) | set(unexpected))
+    passed = not blockers
+
     return {
-        "status": "SOFTWARE_CEILING_PASS" if not blockers else "SOFTWARE_INCOMPLETE",
+        "status": "SOFTWARE_CEILING_PASS" if passed else "SOFTWARE_INCOMPLETE",
         "blockers": blockers,
         "missing": missing,
         "failed": failed,
+        "invalid": invalid,
+        "unexpected": unexpected,
         "required": sorted(REQUIRED_GATES),
-        "remaining_hardware_gates": sorted(HARDWARE_ONLY_GATES) if not blockers else [],
+        "remaining_hardware_gates": sorted(HARDWARE_ONLY_GATES) if passed else [],
     }
