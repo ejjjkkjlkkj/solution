@@ -33,11 +33,9 @@ class WorkflowPolicyTests(unittest.TestCase):
         digest = "b" * 64
         self.assertEqual(self.scan(f"steps:\n  - uses: docker://alpine@sha256:{digest}\n"), [])
 
-
     def test_mutable_latest_runner_is_rejected(self):
         violations = self.scan("jobs:\n  x:\n    runs-on: ubuntu-latest\n")
         self.assertEqual(violations[0].code, "MUTABLE_RUNNER_LABEL")
-
         violations = self.scan(
             "strategy:\n  matrix:\n    os: [ubuntu-latest, windows-latest]\n"
         )
@@ -45,23 +43,18 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertTrue(all(v.code == "MUTABLE_RUNNER_LABEL" for v in violations))
 
     def test_pinned_runner_is_allowed(self):
-        self.assertEqual(
-            self.scan("jobs:\n  x:\n    runs-on: ubuntu-24.04\n"),
-            [],
-        )
-
+        self.assertEqual(self.scan("jobs:\n  x:\n    runs-on: ubuntu-24.04\n"), [])
 
     def test_mutable_pip_installs_are_rejected(self):
         for command in (
             "python -m pip install -e .",
             "python3 -m pip install -r requirements.txt",
             "python3 -m pip install --upgrade -r requirements.txt",
+            "pip3 install package",
         ):
             with self.subTest(command=command):
                 violations = self.scan(f"steps:\n  - run: {command}\n")
-                self.assertTrue(
-                    any(v.code == "PIP_INSTALL_WITHOUT_HASHES" for v in violations)
-                )
+                self.assertTrue(any(v.code == "PIP_INSTALL_WITHOUT_HASHES" for v in violations))
 
     def test_split_mutable_pip_install_is_rejected(self):
         workflow = """steps:
@@ -71,9 +64,7 @@ class WorkflowPolicyTests(unittest.TestCase):
         -r requirements.txt
 """
         violations = self.scan(workflow)
-        self.assertTrue(
-            any(v.code == "PIP_INSTALL_WITHOUT_HASHES" for v in violations)
-        )
+        self.assertTrue(any(v.code == "PIP_INSTALL_WITHOUT_HASHES" for v in violations))
 
     def test_hash_locked_multiline_pip_install_is_allowed(self):
         workflow = """steps:
@@ -84,6 +75,14 @@ class WorkflowPolicyTests(unittest.TestCase):
         -r requirements-build.lock
 """
         self.assertEqual(self.scan(workflow), [])
+
+    def test_hash_word_in_comment_does_not_satisfy_policy(self):
+        workflow = """steps:
+  - run: python -m pip install package # --require-hashes
+"""
+        violations = self.scan(workflow)
+        self.assertTrue(any(v.code == "PIP_INSTALL_WITHOUT_HASHES" for v in violations))
+
 
 if __name__ == "__main__":
     unittest.main()
