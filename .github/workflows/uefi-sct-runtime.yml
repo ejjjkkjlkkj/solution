@@ -1,0 +1,144 @@
+name: UEFI SCT Runtime
+
+on:
+  push:
+    branches:
+      - main
+      - "dev/**"
+  workflow_dispatch:
+
+concurrency:
+  group: sct-runtime-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  EDK2_TAG: edk2-stable202508
+  EDK2_SHA: d46aa46c8361194521391aa581593e556c707c6e
+  SCT_TAG: edk2-test-stable202509
+  SCT_SHA: 2b2a16ac239cd89d778cb79ae6e42c533fc4c25a
+
+jobs:
+  sct-runtime:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential nasm uuid-dev python3-pip mtools dosfstools qemu-system-x86
+
+      - name: Checkout pinned EDK II and SCT
+        run: |
+          git clone --depth 1 --branch "$EDK2_TAG" --recurse-submodules https://github.com/tianocore/edk2.git
+          test "$(git -C edk2 rev-parse HEAD)" = "$EDK2_SHA"
+          git clone --depth 1 --branch "$SCT_TAG" https://github.com/tianocore/edk2-test.git
+          test "$(git -C edk2-test rev-parse HEAD)" = "$SCT_SHA"
+          cp -a edk2-test/uefi-sct/SctPkg ./SctPkg
+
+      - name: Build official SCT
+        run: |
+          python3 -m pip install --upgrade -r edk2/pip-requirements.txt
+          chmod +x SctPkg/build.sh
+          ./SctPkg/build.sh X64 GCC RELEASE
+          SCT_PACKAGE="$GITHUB_WORKSPACE/Build/UefiSct/RELEASE_GCC5/SctPackageX64"
+          test -d "$SCT_PACKAGE/X64"
+          test -f "$SCT_PACKAGE/SctStartup.nsh"
+          test -f "$SCT_PACKAGE/X64/Sct.efi"
+
+      - name: Build pinned OVMF and UEFI Shell
+        run: |
+          make -C edk2/BaseTools
+          export WORKSPACE="$GITHUB_WORKSPACE/edk2"
+          export PACKAGES_PATH="$WORKSPACE:$GITHUB_WORKSPACE/SctPkg"
+          cd edk2
+          source edksetup.sh BaseTools
+          build -a X64 -t GCC -b RELEASE -p OvmfPkg/OvmfPkgX64.dsc
+          build -a X64 -t GCC -b RELEASE -p ShellPkg/ShellPkg.dsc
+          OVMF_CODE="$(find Build -path '*/FV/OVMF_CODE.fd' | head -1)"
+          OVMF_VARS="$(find Build -path '*/FV/OVMF_VARS.fd' | head -1)"
+          SHELL_EFI="$(find Build -iname Shell.efi | head -1)"
+          test -n "$OVMF_CODE"
+          test -n "$OVMF_VARS"
+          test -n "$SHELL_EFI"
+          cp "$OVMF_CODE" "$GITHUB_WORKSPACE/OVMF_CODE.fd"
+          cp "$OVMF_VARS" "$GITHUB_WORKSPACE/OVMF_VARS.fd"
+          cp "$SHELL_EFI" "$GITHUB_WORKSPACE/Shell.efi"
+
+      - name: Assemble disposable SCT disk
+        run: |
+          SCT_PACKAGE="$GITHUB_WORKSPACE/Build/UefiSct/RELEASE_GCC5/SctPackageX64"
+          PAYLOAD_KB="$(du -sk "$SCT_PACKAGE/X64" | awk '{print $1}')"
+          SIZE_MB=$(( (PAYLOAD_KB / 1024) + 256 ))
+          if [ "$SIZE_MB" -lt 768 ]; then SIZE_MB=768; fi
+          truncate -s "${SIZE_MB}M" sct-runtime.img
+          mkfs.vfat -n SCTRUN sct-runtime.img
+          mmd -i sct-runtime.img ::/EFI
+          mmd -i sct-runtime.img ::/EFI/BOOT
+          mmd -i sct-runtime.img ::/Sct
+          mcopy -i sct-runtime.img Shell.efi ::/EFI/BOOT/BOOTX64.EFI
+          mcopy -s -i sct-runtime.img "$SCT_PACKAGE/X64"/* ::/Sct/
+          mcopy -i sct-runtime.img "$SCT_PACKAGE/SctStartup.nsh" ::/SctStartup.nsh
+          printf 'verbose\n' > verbose.mode
+          mcopy -i sct-runtime.img verbose.mode ::/Sct/.verbose.mode
+          cat > startup.nsh <<'NSH'
+echo -off
+fs0:
+fs0:\SctStartup.nsh
+echo OMNI_SCT_RETURNED > fs0:\SCT-DONE.TXT
+reset -s
+NSH
+          mcopy -i sct-runtime.img startup.nsh ::/startup.nsh
+          mdir -i sct-runtime.img ::/
+          mdir -i sct-runtime.img ::/Sct
+
+      - name: Execute official SCT against pinned OVMF
+        run: |
+          cp OVMF_VARS.fd OVMF_SCT_VARS.fd
+          set +e
+          timeout --signal=TERM 55m qemu-system-x86_64             -machine q35,accel=tcg             -m 2048             -display none             -monitor none             -serial file:sct-serial.log             -net none             -drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.fd             -drive if=pflash,format=raw,file=OVMF_SCT_VARS.fd             -drive file=sct-runtime.img,format=raw
+          QEMU_RC=$?
+          set -e
+          echo "QEMU_RC=$QEMU_RC"
+          if [ "$QEMU_RC" -eq 124 ]; then
+            echo "SCT runtime timed out before returning to startup.nsh" >&2
+            exit 1
+          fi
+          mcopy -i sct-runtime.img ::/SCT-DONE.TXT SCT-DONE.TXT
+          grep -a 'OMNI_SCT_RETURNED' SCT-DONE.TXT
+
+      - name: Extract and strictly analyze SCT results
+        run: |
+          mkdir -p sct-results
+          mcopy -s -i sct-runtime.img ::/Sct/Overall sct-results/
+          find sct-results -type f -maxdepth 3 -print
+          SUMMARY_LOG="$(find sct-results -iname Summary.log | head -1)"
+          SUMMARY_EKL="$(find sct-results -iname Summary.ekl | head -1)"
+          test -n "$SUMMARY_LOG"
+          test -n "$SUMMARY_EKL"
+          python tools/sct_summary.py "$SUMMARY_LOG" --json-out sct-summary.json --strict
+
+      - name: Hash runtime evidence
+        if: always()
+        run: |
+          {
+            test -f SCT-DONE.TXT && sha256sum SCT-DONE.TXT || true
+            test -f sct-summary.json && sha256sum sct-summary.json || true
+            test -f sct-serial.log && sha256sum sct-serial.log || true
+            find sct-results -type f -print0 2>/dev/null | sort -z | xargs -0 -r sha256sum
+          } > sct-runtime-sha256.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: uefi-sct-runtime-evidence
+          path: |
+            SCT-DONE.TXT
+            sct-summary.json
+            sct-serial.log
+            sct-runtime-sha256.txt
+            sct-results/

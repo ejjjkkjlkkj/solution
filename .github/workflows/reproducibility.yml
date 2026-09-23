@@ -7,6 +7,10 @@ on:
       - "dev/**"
   workflow_dispatch:
 
+concurrency:
+  group: reproducibility-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   id-token: write
