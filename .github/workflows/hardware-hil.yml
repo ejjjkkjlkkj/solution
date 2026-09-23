@@ -84,8 +84,16 @@ jobs:
           trap - EXIT
 
           qemu-img convert -f raw -O vmdk -o subformat=monolithicSparse omni-fat.img omni-boot.vmdk
-          cp /usr/share/OVMF/OVMF_CODE.fd .
-          cp /usr/share/OVMF/OVMF_VARS.fd .
+          if [[ -f /usr/share/OVMF/OVMF_CODE_4M.fd && -f /usr/share/OVMF/OVMF_VARS_4M.fd ]]; then
+            cp /usr/share/OVMF/OVMF_CODE_4M.fd OVMF_CODE.fd
+            cp /usr/share/OVMF/OVMF_VARS_4M.fd OVMF_VARS.fd
+          elif [[ -f /usr/share/OVMF/OVMF_CODE.fd && -f /usr/share/OVMF/OVMF_VARS.fd ]]; then
+            cp /usr/share/OVMF/OVMF_CODE.fd OVMF_CODE.fd
+            cp /usr/share/OVMF/OVMF_VARS.fd OVMF_VARS.fd
+          else
+            echo "Compatible OVMF CODE/VARS pair not found" >&2
+            exit 1
+          fi
           sha256sum OmniProbe.efi omni-challenge.txt omni-run-binding.json omni-fat.img omni-gpt.img omni-boot.vmdk OVMF_CODE.fd OVMF_VARS.fd > SHA256SUMS.txt
           sha256sum -c SHA256SUMS.txt
 
