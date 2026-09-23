@@ -10,19 +10,19 @@ from dataclasses import dataclass
 USES_KEY_RE = r'(?:"uses"|\'uses\'|uses)'
 CONTINUE_KEY_RE = r'(?:"continue-on-error"|\'continue-on-error\'|continue-on-error)'
 USES_RE = re.compile(
-    r"^\\s*-?\\s*" + USES_KEY_RE + r"\\s*:\\s*([^\\s#]+)",
+    r"^\s*-?\s*" + USES_KEY_RE + r"\s*:\s*([^\s#]+)",
     re.IGNORECASE,
 )
 FLOW_USES_RE = re.compile(
-    r"(?:^|[,{[])\\s*-?\\s*" + USES_KEY_RE + r"\\s*:",
+    r"(?:^|[\[{,])\s*-?\s*" + USES_KEY_RE + r"\s*:",
     re.IGNORECASE,
 )
 CONTINUE_RE = re.compile(
-    r"(?:^|[{,])\\s*-?\\s*" + CONTINUE_KEY_RE + r"\\s*:\\s*true(?:\\s*[,}]|\\s*$)",
+    r"(?:^|[{,])\s*-?\s*" + CONTINUE_KEY_RE + r"\s*:\s*true(?:\s*[,}]|\s*$)",
     re.IGNORECASE,
 )
 EXPLICIT_POLICY_KEY_RE = re.compile(
-    r"^\\s*\\?\\s*(?:" + USES_KEY_RE + "|" + CONTINUE_KEY_RE + r")\\s*$",
+    r"^\s*\?\s*(?:" + USES_KEY_RE + "|" + CONTINUE_KEY_RE + r")\s*$",
     re.IGNORECASE,
 )
 COMMIT_REF_RE = re.compile(r"^[0-9a-fA-F]{40}$")

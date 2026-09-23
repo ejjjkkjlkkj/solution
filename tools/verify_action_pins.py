@@ -8,15 +8,15 @@ import re
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 USES_KEY_RE = r'(?:"uses"|\'uses\'|uses)'
 USES_RE = re.compile(
-    r"^\\s*(?:-\\s*)?" + USES_KEY_RE + r"\\s*:\\s*([^\\s#]+)\\s*(?:#.*)?$",
+    r"^\s*(?:-\s*)?" + USES_KEY_RE + r"\s*:\s*([^\s#]+)\s*(?:#.*)?$",
     re.IGNORECASE,
 )
 FLOW_USES_RE = re.compile(
-    r"(?:^|[,{[])\\s*-?\\s*" + USES_KEY_RE + r"\\s*:",
+    r"(?:^|[\[{,])\s*-?\s*" + USES_KEY_RE + r"\s*:",
     re.IGNORECASE,
 )
 EXPLICIT_USES_KEY_RE = re.compile(
-    r"^\\s*\\?\\s*" + USES_KEY_RE + r"\\s*$",
+    r"^\s*\?\s*" + USES_KEY_RE + r"\s*$",
     re.IGNORECASE,
 )
 ACTION_REF_RE = re.compile(
