@@ -18,6 +18,8 @@ REQUIRED_GATES = frozenset(
         "core_semantics",
         "native_verification",
         "deep_software_verification",
+        "deep_regression_gates",
+        "formal_semantic_proof",
         "reproducibility_and_provenance",
         "uefi_sct_build",
         "uefi_sct_runtime_ovmf",
