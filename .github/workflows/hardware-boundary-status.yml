@@ -1,0 +1,51 @@
+name: Hardware Boundary Status
+
+on:
+  push:
+    branches:
+      - main
+      - "dev/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  report:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -e .
+      - name: Snapshot physical HIL status for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OMNI_HEAD_SHA: ${{ github.sha }}
+        run: |
+          gh api "/repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$OMNI_HEAD_SHA&per_page=100" > workflow-runs.json
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          from omni.ceiling import evaluate_hardware
+          from tools.ci_ceiling_manifest import build_hardware
+
+          payload=json.loads(Path("workflow-runs.json").read_text(encoding="utf-8"))
+          manifest,details=build_hardware(payload,os.environ["OMNI_HEAD_SHA"])
+          result=evaluate_hardware(manifest)
+          Path("hardware-manifest.json").write_text(json.dumps(manifest,indent=2,sort_keys=True)+"\n",encoding="utf-8")
+          Path("hardware-boundary.json").write_text(json.dumps(result,indent=2,sort_keys=True)+"\n",encoding="utf-8")
+          Path("hardware-details.json").write_text(json.dumps(details,indent=2,sort_keys=True)+"\n",encoding="utf-8")
+          print(json.dumps(result,indent=2,sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: hardware-boundary-status
+          path: |
+            hardware-manifest.json
+            hardware-boundary.json
+            hardware-details.json
+            workflow-runs.json
