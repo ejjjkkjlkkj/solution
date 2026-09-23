@@ -100,19 +100,10 @@ def _latest_run(
     if not candidates:
         return None
 
-    # A duplicate push of the exact same immutable commit can be cancelled by
-    # GitHub Actions concurrency without evaluating the code. Such a
-    # cancellation must not erase another canonical run for the same SHA.
-    # Every other state remains substantive and therefore fail-closed.
-    substantive = [
-        run
-        for run in candidates
-        if not (
-            run.get("status") == "completed"
-            and run.get("conclusion") == "cancelled"
-        )
-    ]
-    return max(substantive or candidates, key=_run_order)
+    # The newest canonical push is authoritative. Older cancelled duplicates
+    # naturally lose to a newer run, while a newer cancellation must remain
+    # visible and block PASS instead of reviving stale successful evidence.
+    return max(candidates, key=_run_order)
 
 
 def build_for_mapping(
