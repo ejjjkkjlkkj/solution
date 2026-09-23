@@ -14,7 +14,9 @@ class BundleCommitBindingTests(unittest.TestCase):
         (root / "a.txt").write_text("alpha\n", encoding="utf-8")
         (root / "nested").mkdir()
         (root / "nested" / "b.bin").write_bytes(b"\x00\x01\x02")
-        (root / "run.sh").write_text("#!/bin/sh\necho omni\n", encoding="utf-8")
+        run_script = root / "run.sh"
+        run_script.write_text("#!/bin/sh\necho omni\n", encoding="utf-8")
+        run_script.chmod(0o755)
         subprocess.run(["git", "-C", str(root), "add", "."], check=True)
         subprocess.run(
             ["git", "-C", str(root), "update-index", "--chmod=+x", "run.sh"],
