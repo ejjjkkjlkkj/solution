@@ -3,7 +3,7 @@ from pathlib import Path
 from omni.semantic import SemanticModel
 from omni.flight import build, verify
 from omni.firmware import inspect
-from omni.ceiling import evaluate
+from omni.ceiling import REQUIRED_GATES, evaluate
 
 class CoreTests(unittest.TestCase):
     def test_semantic_password_redaction(self):
@@ -32,7 +32,17 @@ class CoreTests(unittest.TestCase):
             self.assertTrue(result["firmware_volumes"][0]["valid_bounds"])
 
     def test_ceiling_is_strict(self):
-        self.assertEqual(evaluate({"asan": "PASS", "cbmc": "NOT_RUN"})["status"], "SOFTWARE_INCOMPLETE")
-        self.assertEqual(evaluate({"asan": "PASS", "cbmc": "PASS"})["status"], "SOFTWARE_CEILING_PASS")
+        partial = {"core_semantics": "PASS", "native_verification": "PASS"}
+        result = evaluate(partial)
+        self.assertEqual(result["status"], "SOFTWARE_INCOMPLETE")
+        self.assertTrue(result["missing"])
+
+        complete = {gate: "PASS" for gate in REQUIRED_GATES}
+        self.assertEqual(evaluate(complete)["status"], "SOFTWARE_CEILING_PASS")
+
+        complete["uefi_sct_runtime_ovmf"] = "NOT_RUN"
+        result = evaluate(complete)
+        self.assertEqual(result["status"], "SOFTWARE_INCOMPLETE")
+        self.assertIn("uefi_sct_runtime_ovmf", result["failed"])
 
 if __name__ == "__main__": unittest.main()
