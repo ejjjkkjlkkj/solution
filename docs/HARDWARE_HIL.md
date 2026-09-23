@@ -60,4 +60,6 @@ Those require observation on the actual machine.
 
 ## Per-run freshness binding
 
-Virtual HIL evidence is bound to the exact Git commit. The build embeds a 64-hex challenge derived from `GITHUB_SHA` on the boot media. OmniProbe emits the exact challenge to serial/debug output and persists it in `OMNI-EVIDENCE.TXT`. The Windows QEMU and VMware jobs delete prior logs before launch and require the exact expected challenge plus all PASS markers and no FAIL markers. A stale log from another run cannot satisfy the gate.
+Virtual HIL evidence is bound to the exact Git commit **and GitHub workflow run ID**. The build derives a 64-hex challenge from `GITHUB_SHA:GITHUB_RUN_ID`, stores the binding in `omni-run-binding.json`, and embeds the challenge on the boot media. OmniProbe emits the exact challenge to serial/debug output and persists it in `OMNI-EVIDENCE.TXT`.
+
+The Windows runner verifies the binding file against its current `GITHUB_SHA` and `GITHUB_RUN_ID` before launching privileged tests. QEMU and VMware run under PsExec SYSTEM, delete previous logs, and require the exact challenge plus all PASS markers and no FAIL markers. Evidence from another workflow run, even for the same commit, cannot satisfy the gate.
