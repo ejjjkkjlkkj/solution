@@ -163,8 +163,12 @@ class SemanticModel:
             elif "state" not in raw:
                 self._violate("STATE_MISSING", node=node_id)
             else:
-                node.state = self._state(raw["state"])
-                self._validate(node)
+                try:
+                    node.state = self._state(raw["state"])
+                except TypeError:
+                    self._violate("INVALID_NODE_PAYLOAD", node=node_id)
+                else:
+                    self._validate(node)
 
         elif kind == "focus_changed":
             node = self.nodes.get(node_id)
