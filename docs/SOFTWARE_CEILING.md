@@ -41,6 +41,8 @@ GitHub artifact attestations are treated as SLSA v1.0 Build Level 2 evidence. Th
 
 The HIL workflow is evaluated separately. Once every software gate is PASS, any remaining uncertainty is allowed to be hardware/OEM-specific rather than an unclosed software question.
 
+Physical identity binding is HIL-only: the real-machine proof may require the SMBIOS Type 1 UUID emitted by OmniProbe to match the UUID captured from the Windows hardware inventory. This strengthens physical evidence without making hardware presence a prerequisite for `SOFTWARE_CEILING_PASS`.
+
 The independent verification gate is not allowed to pass from an OVMF launch alone. It must rebuild OmniProbe.efi from the pinned source/toolchain, boot that exact rebuild, validate the commit-bound challenge, reject every OMNI_*_FAIL marker, and extract the evidence file produced by that execution.
 
 ## SCT distinction
