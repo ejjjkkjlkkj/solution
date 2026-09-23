@@ -17,8 +17,24 @@ class DeterministicBundleTests(unittest.TestCase):
         (root / "nested").mkdir()
         (root / "nested" / "b.bin").write_bytes(b"\x00\x01\x02")
         subprocess.run(["git", "-C", str(root), "add", "a.txt", "nested/b.bin"], check=True)
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(root),
+                "-c",
+                "user.name=omni-test",
+                "-c",
+                "user.email=omni@example.invalid",
+                "commit",
+                "-q",
+                "-m",
+                "fixture",
+            ],
+            check=True,
+        )
 
-    def test_bundle_ignores_untracked_noise_and_binds_tracked_content(self):
+    def test_bundle_ignores_untracked_noise_and_binds_committed_content(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             self.make_repo(root)
@@ -46,9 +62,36 @@ class DeterministicBundleTests(unittest.TestCase):
                 )
 
             (root / "a.txt").write_text("changed\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(root), "add", "a.txt"], check=True)
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(root),
+                    "-c",
+                    "user.name=omni-test",
+                    "-c",
+                    "user.email=omni@example.invalid",
+                    "commit",
+                    "-q",
+                    "-m",
+                    "change tracked content",
+                ],
+                check=True,
+            )
             changed = root / "changed.zip"
             digest3 = create_bundle(root, changed)
             self.assertNotEqual(digest1, digest3)
+
+    def test_bundle_rejects_dirty_index(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self.make_repo(root)
+            (root / "staged.txt").write_text("not committed\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(root), "add", "staged.txt"], check=True)
+
+            with self.assertRaisesRegex(ValueError, "index is dirty"):
+                create_bundle(root, root / "dirty-index.zip")
 
 
 class ProvenanceTests(unittest.TestCase):
