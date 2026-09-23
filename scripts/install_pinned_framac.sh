@@ -20,13 +20,20 @@ opam switch create omni-formal "$OCAML_PACKAGE" -y
 eval "$(opam env --switch=omni-formal --set-switch)"
 opam install -y "$FRAMAC_PACKAGE" "$ALT_ERGO_PACKAGE"
 
-test "$(frama-c -version | head -1 | tr -d '\r')" = "33.0 (Arsenic)" || frama-c -version
+frama-c -version | grep -F "33.0 (Arsenic)"
 alt-ergo --version
 opam switch export "${GITHUB_WORKSPACE:-$PWD}/formal-toolchain.opam.export"
 opam list --installed --columns=name,version > "${GITHUB_WORKSPACE:-$PWD}/formal-toolchain-packages.txt"
 printf 'OPAM_REPOSITORY_SHA=%s\nOCAML_PACKAGE=%s\nFRAMAC_PACKAGE=%s\nALT_ERGO_PACKAGE=%s\n' \
   "$OPAM_REPOSITORY_SHA" "$OCAML_PACKAGE" "$FRAMAC_PACKAGE" "$ALT_ERGO_PACKAGE" \
   > "${GITHUB_WORKSPACE:-$PWD}/formal-toolchain-pins.txt"
+
+if [[ -n "${GITHUB_ENV:-}" ]]; then
+  printf 'OPAMROOT=%s\nOPAMSWITCH=omni-formal\n' "$ROOT" >> "$GITHUB_ENV"
+fi
+if [[ -n "${GITHUB_PATH:-}" ]]; then
+  opam var bin --switch=omni-formal >> "$GITHUB_PATH"
+fi
 
 echo "export OPAMROOT=$ROOT"
 echo 'eval "$(opam env --switch=omni-formal --set-switch)"'
