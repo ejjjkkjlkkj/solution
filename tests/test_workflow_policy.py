@@ -72,6 +72,27 @@ class WorkflowPolicyTests(unittest.TestCase):
 """
         self.assertEqual(self.scan(workflow), [])
 
+    def test_json_printf_inside_run_block_is_not_yaml_mapping(self):
+        workflow = """jobs:
+  hil:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: |
+          printf '{"schema":"omni.hil-run-binding.v1","head_sha":"%s"}\\n' \
+            "$GITHUB_SHA" > binding.json
+"""
+        self.assertEqual(self.scan(workflow), [])
+
+    def test_mutable_pip_inside_run_block_remains_rejected(self):
+        workflow = """steps:
+  - run: |
+      python -m pip install -r requirements.txt
+"""
+        violations = self.scan(workflow)
+        self.assertTrue(
+            any(v.code == "PIP_INSTALL_WITHOUT_HASHES" for v in violations)
+        )
+
     def test_local_action_is_allowed(self):
         self.assertEqual(self.scan("steps:\n  - uses: ./local-action\n"), [])
 
