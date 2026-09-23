@@ -73,7 +73,7 @@ jobs:
       - name: Install Frama-C 33 through opam
         run: |
           sudo apt-get update
-          sudo apt-get install -y opam libgmp-dev
+          sudo apt-get install -y opam libgmp-dev graphviz
           opam init --disable-sandboxing -y
           opam switch create 5.3.0 -y
           eval "$(opam env)"
@@ -108,7 +108,7 @@ jobs:
       - name: Install prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential lcov nasm uuid-dev mono-complete ca-certificates-mono
+          sudo apt-get install -y build-essential gcc-multilib g++-multilib lcov nasm uuid-dev mono-complete ca-certificates-mono
           python3 -m pip install --upgrade -r edk2/pip-requirements.txt
       - name: Run official MdePkg host tests with ASan enabled
         working-directory: edk2
