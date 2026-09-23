@@ -30,7 +30,7 @@ jobs:
       - name: Install prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential nasm uuid-dev python3-pip mtools dosfstools qemu-system-x86
+          sudo apt-get install -y build-essential nasm uuid-dev python3-pip mtools dosfstools qemu-system-x86 acpica-tools
 
       - name: Checkout pinned EDK II and SCT
         run: |
