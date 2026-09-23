@@ -1,0 +1,38 @@
+{
+  "schema": "omniexec.toolchains.v2",
+  "edk2_primary": {
+    "tag": "edk2-stable202608",
+    "commit": "2970e5699ba6267f3384ffab20f96647578aebc8"
+  },
+  "sct": {
+    "edk2_tag": "edk2-stable202508",
+    "edk2_commit": "d46aa46c8361194521391aa581593e556c707c6e",
+    "tag": "edk2-test-stable202509",
+    "commit": "2b2a16ac239cd89d778cb79ae6e42c533fc4c25a"
+  },
+  "cbmc": {
+    "version": "6.11.0",
+    "ubuntu_24_04_deb_sha256": "b3721aa541038384d7801ea3aeabbcddc3e8845ac8f1cbff637cf8dec7481ac8"
+  },
+  "formal": {
+    "opam_repository_sha": "6261f3c853ae417b354c06496e8458053131f14b",
+    "ocaml_package": "ocaml-base-compiler.5.3.0",
+    "frama_c_package": "frama-c.33.0",
+    "alt_ergo_package": "alt-ergo.2.6.4"
+  },
+  "qemu": {
+    "version": "11.1.1",
+    "release_key_fingerprint": "CEACC9E15534EBABB82D3FA03353C9CEF108B584"
+  },
+  "actionlint": {
+    "version": "1.7.12",
+    "linux_amd64_sha256": "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
+  },
+  "github_actions": {
+    "checkout": "11d5960a326750d5838078e36cf38b85af677262",
+    "setup_python": "a26af69be951a213d495a4c3e4e4022e16d87065",
+    "upload_artifact": "ea165f8d65b6e75b540449e92b4886f43607fa02",
+    "download_artifact": "d3f86a106a0bac45b974a628896c90dbdf5c8093",
+    "attest": "1e69f48acb82d1966a394da916b4c1698aa569d6"
+  }
+}
