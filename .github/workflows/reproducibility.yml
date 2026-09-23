@@ -13,9 +13,6 @@ concurrency:
 
 permissions:
   contents: read
-  id-token: write
-  attestations: write
-  artifact-metadata: write
 
 env:
   EDK2_TAG: edk2-stable202608
@@ -125,6 +122,10 @@ jobs:
             OmniProbe.efi.sha256
 
   compare-and-attest:
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     runs-on: ubuntu-24.04
     needs: [build-a, build-b, uefi-build-a, uefi-build-b]
     steps:

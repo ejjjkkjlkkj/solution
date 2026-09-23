@@ -14,12 +14,13 @@ concurrency:
 
 permissions:
   contents: read
-  id-token: write
-  attestations: write
-  artifact-metadata: write
 
 jobs:
   build-uefi-artifact:
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     runs-on: ubuntu-24.04
     timeout-minutes: 80
     steps:
@@ -128,6 +129,9 @@ jobs:
 
   physical-amd:
     needs: build-uefi-artifact
+    permissions:
+      contents: read
+      attestations: read
     runs-on: [self-hosted, Windows, X64]
     timeout-minutes: 30
     defaults:
