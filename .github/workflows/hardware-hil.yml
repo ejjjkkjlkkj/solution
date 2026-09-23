@@ -47,8 +47,11 @@ jobs:
       - name: Build virtual and physical boot media
         run: |
           set -euo pipefail
-          printf '%s' "$GITHUB_SHA" | sha256sum | awk '{print $1}' > omni-challenge.txt
+          printf '%s:%s' "$GITHUB_SHA" "$GITHUB_RUN_ID" | sha256sum | awk '{print $1}' > omni-challenge.txt
           test "$(wc -c < omni-challenge.txt)" -eq 65
+          CHALLENGE="$(tr -d '\r\n' < omni-challenge.txt)"
+          printf '{"schema":"omni.hil-run-binding.v1","head_sha":"%s","run_id":"%s","challenge":"%s"}\n' \
+            "$GITHUB_SHA" "$GITHUB_RUN_ID" "$CHALLENGE" > omni-run-binding.json
 
           truncate -s 64M omni-fat.img
           mkfs.vfat -n OMNI omni-fat.img
@@ -80,7 +83,7 @@ jobs:
           qemu-img convert -f raw -O vmdk -o subformat=monolithicSparse omni-fat.img omni-boot.vmdk
           cp /usr/share/OVMF/OVMF_CODE.fd .
           cp /usr/share/OVMF/OVMF_VARS.fd .
-          sha256sum OmniProbe.efi omni-challenge.txt omni-fat.img omni-gpt.img omni-boot.vmdk OVMF_CODE.fd OVMF_VARS.fd > SHA256SUMS.txt
+          sha256sum OmniProbe.efi omni-challenge.txt omni-run-binding.json omni-fat.img omni-gpt.img omni-boot.vmdk OVMF_CODE.fd OVMF_VARS.fd > SHA256SUMS.txt
           sha256sum -c SHA256SUMS.txt
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -89,6 +92,7 @@ jobs:
           path: |
             OmniProbe.efi
             omni-challenge.txt
+            omni-run-binding.json
             omni-fat.img
             omni-gpt.img
             omni-boot.vmdk
@@ -121,6 +125,13 @@ jobs:
             Path = $psexec
             SHA256 = $hash
           } | ConvertTo-Json | Set-Content psexec-identity.json -Encoding utf8
+
+          $binding = Get-Content hil\omni-run-binding.json -Raw | ConvertFrom-Json
+          $challenge = (Get-Content hil\omni-challenge.txt -Raw).Trim().ToLowerInvariant()
+          if ($binding.schema -ne 'omni.hil-run-binding.v1') { throw 'Invalid HIL binding schema' }
+          if ($binding.head_sha -ne $env:GITHUB_SHA) { throw 'HIL binding head SHA mismatch' }
+          if ([string]$binding.run_id -ne [string]$env:GITHUB_RUN_ID) { throw 'HIL binding run ID mismatch' }
+          if ($binding.challenge -ne $challenge) { throw 'HIL binding challenge mismatch' }
 
       - name: Assert physical platform under SYSTEM
         run: |
