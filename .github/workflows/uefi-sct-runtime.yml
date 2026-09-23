@@ -107,6 +107,10 @@ jobs:
             echo "SCT runtime timed out before returning to startup.nsh" >&2
             exit 1
           fi
+          if [ "$QEMU_RC" -ne 0 ]; then
+            echo "QEMU exited abnormally: $QEMU_RC" >&2
+            exit 1
+          fi
           mcopy -i sct-runtime.img ::/SCT-DONE.TXT SCT-DONE.TXT
           grep -a 'OMNI_SCT_RETURNED' SCT-DONE.TXT
 
@@ -119,6 +123,8 @@ jobs:
           SUMMARY_EKL="$(find sct-results -iname Summary.ekl | head -1)"
           test -n "$SUMMARY_LOG"
           test -n "$SUMMARY_EKL"
+          test -s "$SUMMARY_LOG"
+          test -s "$SUMMARY_EKL"
           python tools/sct_summary.py "$SUMMARY_LOG" --json-out sct-summary.json --strict
 
       - name: Hash runtime evidence
