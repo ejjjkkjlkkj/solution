@@ -11,7 +11,7 @@ USES_RE = re.compile(r"^\s*-?\s*uses:\s*([^\s#]+)", re.IGNORECASE)
 CONTINUE_RE = re.compile(r"^\s*continue-on-error:\s*true\s*(?:#.*)?$", re.IGNORECASE)
 COMMIT_REF_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 DOCKER_DIGEST_RE = re.compile(r"^docker://.+@sha256:[0-9a-fA-F]{64}$")
-MUTABLE_RUNNER_RE = re.compile(r"\\b(?:ubuntu|windows|macos)-latest\\b", re.IGNORECASE)
+MUTABLE_RUNNER_RE = re.compile(r"(?:ubuntu|windows|macos)-latest", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
