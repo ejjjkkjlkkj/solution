@@ -32,9 +32,12 @@ The preparation tool:
 - writes OMNI-CHALLENGE.TXT to the boot media;
 - stores the expected challenge in the requested off-media file.
 
-Boot the USB through the real ASUS UEFI. After returning to Windows, verify the fresh evidence:
+Boot the USB through the real ASUS UEFI. After returning to Windows, read the same SMBIOS Type 1 UUID exposed by Windows and verify the fresh evidence:
 
-    python tools/verify_uefi_evidence.py --evidence D:\OMNI-EVIDENCE.TXT --efi D:\EFI\BOOT\BOOTX64.EFI --expected-sha256 <SHA256> --expected-challenge <64_HEX_FROM_OFF_MEDIA_FILE>
+    $platformUuid = (Get-CimInstance Win32_ComputerSystemProduct).UUID
+    python tools/verify_uefi_evidence.py --evidence D:\OMNI-EVIDENCE.TXT --efi D:\EFI\BOOT\BOOTX64.EFI --expected-sha256 <SHA256> --expected-challenge <64_HEX_FROM_OFF_MEDIA_FILE> --expected-platform-uuid $platformUuid
+
+OmniProbe records the SMBIOS Type 1 system UUID in pre-OS evidence when the platform exposes a meaningful UUID. When `--expected-platform-uuid` is supplied, the verifier requires an exact identity match.
 
 A verifier PASS rejects:
 
@@ -42,7 +45,8 @@ A verifier PASS rejects:
 - a missing, malformed or mismatched challenge;
 - firmware-reported HII/UEFI failure;
 - malformed or incomplete HII statistics;
-- a modified EFI binary.
+- a modified EFI binary;
+- a missing, malformed, zero/FF, or mismatched SMBIOS system UUID when physical identity binding is required.
 
 This binds the returned evidence to the exact expected payload and to the fresh pre-boot challenge. It is still not a cryptographic remote attestation of the motherboard.
 
