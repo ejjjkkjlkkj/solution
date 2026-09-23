@@ -67,6 +67,14 @@ HARDWARE_WORKFLOW_PATHS = {
 }
 
 
+def _run_order(run: dict[str, Any]) -> tuple[int, str, int]:
+    return (
+        int(run.get("run_number") or 0),
+        str(run.get("created_at") or ""),
+        int(run.get("id") or 0),
+    )
+
+
 def _latest_run(
     runs: list[dict[str, Any]],
     name: str,
@@ -83,14 +91,20 @@ def _latest_run(
     ]
     if not candidates:
         return None
-    return max(
-        candidates,
-        key=lambda run: (
-            int(run.get("run_number") or 0),
-            str(run.get("created_at") or ""),
-            int(run.get("id") or 0),
-        ),
-    )
+
+    # A duplicate push of the exact same immutable commit can be cancelled by
+    # GitHub Actions concurrency without evaluating the code. Such a
+    # cancellation must not erase another canonical run for the same SHA.
+    # Every other state remains substantive and therefore fail-closed.
+    substantive = [
+        run
+        for run in candidates
+        if not (
+            run.get("status") == "completed"
+            and run.get("conclusion") == "cancelled"
+        )
+    ]
+    return max(substantive or candidates, key=_run_order)
 
 
 def build_for_mapping(
