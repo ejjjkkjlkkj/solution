@@ -20,9 +20,19 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install matching LLVM 18 coverage tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y clang-18 llvm-18
+          test -x /usr/bin/clang-18
+          test -x /usr/lib/llvm-18/bin/llvm-profdata
+          test -x /usr/lib/llvm-18/bin/llvm-cov
       - name: Independent LLVM coverage
         run: |
-          clang -std=c11 -Wall -Wextra -Wpedantic -Werror \
+          set -euo pipefail
+          export PATH="/usr/lib/llvm-18/bin:$PATH"
+          clang-18 -std=c11 -Wall -Wextra -Wpedantic -Werror \
             -fprofile-instr-generate -fcoverage-mapping \
             -Iinclude c/omni_protocol.c tests/c/test_protocol.c -o coverage_test
           LLVM_PROFILE_FILE=coverage.profraw ./coverage_test
