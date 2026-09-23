@@ -10,21 +10,50 @@ A hosted Linux runner builds one immutable OmniProbe.efi and three media forms:
 
 The physical Windows self-hosted runner asserts the ASUS M1603QA / Ryzen 7 5800H identity, captures BIOS/board/Secure Boot/TPM/VBS/HDA inventory, then executes the same EFI payload under QEMU and VMware.
 
-The UEFI payload is fail-closed: OMNI_UEFI_PASS is emitted only after HII validation succeeds and OMNI-EVIDENCE.TXT has been flushed. Virtual backends also require OMNI_HII_PASS and OMNI_EVIDENCE_PASS.
+The UEFI payload is fail-closed. OMNI_UEFI_PASS is emitted only when:
+
+- OMNI-CHALLENGE.TXT contains a valid 256-bit hexadecimal challenge;
+- HII/IFR validation passes;
+- OMNI-EVIDENCE.TXT is written and flushed successfully.
+
+Virtual backends additionally require OMNI_CHALLENGE_PASS, OMNI_HII_PASS and OMNI_EVIDENCE_PASS.
 
 ## Final physical gate
 
-Flash omni-gpt.img to removable media, boot it through the real ASUS UEFI, return to the OS and retrieve:
+Flash omni-gpt.img to removable media and mount it in Windows. Before reboot, verify that BOOTX64.EFI is the expected artifact and replace the CI challenge with a fresh challenge whose expected value is stored **off the boot media**:
 
-- EFI/BOOT/BOOTX64.EFI
-- OMNI-EVIDENCE.TXT
+    python tools/prepare_physical_media.py --mount D:\ --expected-sha256 <SHA256> --challenge-out C:\Temp\omni-expected-challenge.txt
 
-Then verify the returned evidence against the SHA-256 of OmniProbe.efi from the same workflow artifact:
+The preparation tool:
 
-    python tools/verify_uefi_evidence.py --evidence D:\\OMNI-EVIDENCE.TXT --efi D:\\EFI\\BOOT\\BOOTX64.EFI --expected-sha256 <SHA256>
+- verifies EFI/BOOT/BOOTX64.EFI against the expected SHA-256;
+- deletes any previous OMNI-EVIDENCE.TXT;
+- generates a cryptographically random 256-bit challenge;
+- writes OMNI-CHALLENGE.TXT to the boot media;
+- stores the expected challenge in the requested off-media file.
 
-A verifier PASS rejects firmware-reported failure, malformed/missing HII statistics, stale/incomplete marker sets and a modified EFI binary. It binds the returned evidence to media containing the expected payload; it is not a cryptographic remote attestation of the motherboard.
+Boot the USB through the real ASUS UEFI. After returning to Windows, verify the fresh evidence:
+
+    python tools/verify_uefi_evidence.py --evidence D:\OMNI-EVIDENCE.TXT --efi D:\EFI\BOOT\BOOTX64.EFI --expected-sha256 <SHA256> --expected-challenge <64_HEX_FROM_OFF_MEDIA_FILE>
+
+A verifier PASS rejects:
+
+- stale evidence from a previous boot;
+- a missing, malformed or mismatched challenge;
+- firmware-reported HII/UEFI failure;
+- malformed or incomplete HII statistics;
+- a modified EFI binary.
+
+This binds the returned evidence to the exact expected payload and to the fresh pre-boot challenge. It is still not a cryptographic remote attestation of the motherboard.
 
 ## Genuinely hardware-only remainder
 
-Speaker intelligibility, physical HDA/EAPD routing, real keyboard behavior, TPM platform behavior and ASUS-specific firmware timing require observation on the actual machine.
+After the physical evidence gate passes, software-only CI still cannot prove:
+
+- speaker intelligibility and acoustic quality;
+- physical HDA codec/amplifier/EAPD routing;
+- real pre-OS keyboard behavior;
+- TPM electrical/platform behavior and quotes;
+- ASUS-specific firmware timing or other electrical/OEM behavior.
+
+Those require observation on the actual machine.
