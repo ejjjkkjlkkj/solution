@@ -142,7 +142,7 @@ jobs:
       - name: Build OmniProbe.efi with real EDK II
         run: |
           cd edk2
-          python3 -m pip install --upgrade -r pip-requirements.txt
+
           make -C BaseTools
           export WORKSPACE="$PWD"
           export PACKAGES_PATH="$PWD:$GITHUB_WORKSPACE/firmware"
