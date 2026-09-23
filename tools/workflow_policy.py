@@ -5,6 +5,7 @@ import argparse
 import json
 import pathlib
 import re
+import shlex
 from dataclasses import dataclass
 
 USES_RE = re.compile(r"^\s*-?\s*uses:\s*([^\s#]+)", re.IGNORECASE)
@@ -12,7 +13,7 @@ CONTINUE_RE = re.compile(r"^\s*continue-on-error:\s*true\s*(?:#.*)?$", re.IGNORE
 COMMIT_REF_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 DOCKER_DIGEST_RE = re.compile(r"^docker://.+@sha256:[0-9a-fA-F]{64}$")
 MUTABLE_RUNNER_RE = re.compile(r"(?:ubuntu|windows|macos)-latest", re.IGNORECASE)
-PIP_INSTALL_RE = re.compile(r"\bpip\s+install\b", re.IGNORECASE)
+PIP_INSTALL_RE = re.compile(r"\bpip(?:3)?\s+install\b", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -21,6 +22,30 @@ class Violation:
     line: int
     code: str
     value: str
+
+
+def _continued_command(lines: list[str], start: int) -> str:
+    """Return one shell command, including backslash-continued lines.
+
+    Workflow YAML is intentionally not parsed here: this policy also scans shell
+    snippets embedded in YAML.  A malformed continuation is still returned and
+    will fail the pip policy below rather than being silently accepted.
+    """
+    parts = [lines[start].strip()]
+    cursor = start
+    while parts[-1].endswith("\\") and cursor + 1 < len(lines):
+        parts.append(lines[cursor + 1].strip())
+        cursor += 1
+    return " ".join(parts)
+
+
+def _has_require_hashes(command: str) -> bool:
+    """Recognize --require-hashes as a shell argument, not as a comment."""
+    try:
+        tokens = shlex.split(command, comments=True, posix=True)
+    except ValueError:
+        return False
+    return "--require-hashes" in tokens
 
 
 def inspect_file(path: pathlib.Path) -> list[Violation]:
@@ -34,14 +59,11 @@ def inspect_file(path: pathlib.Path) -> list[Violation]:
             violations.append(Violation(str(path), number, "MUTABLE_RUNNER_LABEL", raw.strip()))
 
         if PIP_INSTALL_RE.search(raw):
-            command_parts = [raw.strip()]
-            cursor = index
-            while command_parts[-1].rstrip().endswith("\\") and cursor + 1 < len(lines):
-                cursor += 1
-                command_parts.append(lines[cursor].strip())
-            command = " ".join(command_parts)
-            if "--require-hashes" not in command:
-                violations.append(Violation(str(path), number, "PIP_INSTALL_WITHOUT_HASHES", command))
+            command = _continued_command(lines, index)
+            if not _has_require_hashes(command):
+                violations.append(
+                    Violation(str(path), number, "PIP_INSTALL_WITHOUT_HASHES", command)
+                )
 
         match = USES_RE.match(raw)
         if not match:
