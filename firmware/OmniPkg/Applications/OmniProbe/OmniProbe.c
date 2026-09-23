@@ -596,7 +596,14 @@ UefiMain (
   WriteText ("OMNI_BOOT_OK\n");
 
   ChallengeStatus = LoadChallenge (ImageHandle, SystemTable, Challenge);
-  WriteText (EFI_ERROR (ChallengeStatus) ? "OMNI_CHALLENGE_FAIL\n" : "OMNI_CHALLENGE_PASS\n");
+  if (EFI_ERROR (ChallengeStatus)) {
+    WriteText ("OMNI_CHALLENGE_FAIL\n");
+  } else {
+    WriteText ("OMNI_CHALLENGE_PASS\n");
+    WriteText ("OMNI_CHALLENGE=");
+    WriteText (Challenge);
+    WriteText ("\n");
+  }
 
   HiiStatus = ProbeHii (SystemTable, &Stats);
   WriteStat ("OMNI_HII_HANDLES", Stats.Handles);
