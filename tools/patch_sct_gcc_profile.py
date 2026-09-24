@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-LEGACY_TOOLCHAIN_SELECTION = 'export TARGET_TOOLS=\`get_gcc_version "$CROSS_COMPILE"gcc\`'
+LEGACY_TOOLCHAIN_SELECTION = 'export TARGET_TOOLS=`get_gcc_version "$CROSS_COMPILE"gcc`'
 MODERN_TOOLCHAIN_SELECTION = 'export TARGET_TOOLS=GCC'
 
 
