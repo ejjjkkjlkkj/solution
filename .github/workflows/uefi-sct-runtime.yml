@@ -108,24 +108,28 @@ jobs:
           path = Path("startup.nsh")
           text = path.read_text(encoding="ascii").replace("\r\n", "\n")
 
-          old = r"""    else
-      if exist FS%i:\Sct\.verbose.mode then
-        Sct -c -v
-      else
-        Sct -c
-      endif
-    endif"""
+          old = "\n".join([
+              "    else",
+              r"      if exist FS%i:\Sct\.verbose.mode then",
+              "        Sct -c -v",
+              "      else",
+              "        Sct -c",
+              "      endif",
+              "    endif",
+          ])
 
-          new = r"""    else
-      if exist FS%i:\Sct\OMNI-FIR.STA then
-        echo OMNI_SCT_FRESH_RUN
-        rm FS%i:\Sct\OMNI-FIR.STA
-        Sct -r -a -f -v
-      else
-        echo OMNI_SCT_RESUME_RUN
-        Sct -c -f -v
-      endif
-    endif"""
+          new = "\n".join([
+              "    else",
+              r"      if exist FS%i:\Sct\OMNI-FIR.STA then",
+              "        echo OMNI_SCT_FRESH_RUN",
+              r"        rm FS%i:\Sct\OMNI-FIR.STA",
+              "        Sct -r -a -f -v",
+              "      else",
+              "        echo OMNI_SCT_RESUME_RUN",
+              "        Sct -c -f -v",
+              "      endif",
+              "    endif",
+          ])
 
           if text.count(old) != 1:
               raise SystemExit("unexpected upstream SctStartup.nsh structure")
