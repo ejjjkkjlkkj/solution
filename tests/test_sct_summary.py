@@ -38,7 +38,7 @@ class SctSummaryTests(unittest.TestCase):
         self.assertTrue(result["nonzero_error_counts"])
 
     def test_exact_pinned_failure_baseline_can_be_accepted(self):
-        result = parse("Alpha -- PASS\\nKnown -- FAILURE\\nErrors........... 2\\n")
+        result = parse("Alpha -- PASS\nKnown -- FAILURE\nErrors........... 2\n")
         baseline = {
             "schema": "omni.sct-baseline.v1",
             "context": {"platform": "pinned-reference"},
@@ -54,7 +54,7 @@ class SctSummaryTests(unittest.TestCase):
         self.assertTrue(report["match"])
 
     def test_baseline_rejects_any_failure_drift(self):
-        result = parse("Alpha -- PASS\\nNew -- FAILURE\\nErrors........... 2\\n")
+        result = parse("Alpha -- PASS\nNew -- FAILURE\nErrors........... 2\n")
         baseline = {
             "schema": "omni.sct-baseline.v1",
             "expected": {
