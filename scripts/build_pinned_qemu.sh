@@ -54,6 +54,10 @@ SLIRP_VERSION="$(pkg-config --modversion slirp)"
 test -n "$SLIRP_VERSION"
 
 cd "$SOURCE"
+# QEMU 11.1.x accepts --enable-slirp as a boolean feature switch. Because
+# downloads are disabled above and libslirp is verified through pkg-config,
+# this remains a fail-closed system-libslirp build without the obsolete
+# --enable-slirp=system spelling.
 ./configure \
   --disable-download \
   --target-list=x86_64-softmmu \
@@ -63,7 +67,7 @@ cd "$SOURCE"
   --disable-opengl \
   --disable-curses \
   --disable-vnc \
-  --enable-slirp=system
+  --enable-slirp
 
 ninja -C build qemu-system-x86_64 qemu-img
 test -x build/qemu-system-x86_64
@@ -73,7 +77,7 @@ cp build/qemu-system-x86_64 "$OUTPUT"
 
 NETDEV_HELP="$("$OUTPUT" -netdev help 2>&1)"
 if ! grep -Eq '(^|[[:space:]])user([[:space:]]|$)' <<<"$NETDEV_HELP"; then
-  echo "QEMU user networking backend missing despite --enable-slirp=$QEMU_SLIRP_MODE" >&2
+  echo "QEMU user networking backend missing despite system libslirp configuration" >&2
   printf '%s\n' "$NETDEV_HELP" >&2
   exit 1
 fi
