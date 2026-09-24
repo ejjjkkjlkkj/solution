@@ -49,6 +49,8 @@ class UefiSctRuntimeWorkflowTests(unittest.TestCase):
         self.assertIn("cmp -s ci/ovmf-sct-platform.ini sct-profile-from-image.ini", text)
         self.assertIn("-vga none", text)
         self.assertNotIn("-net none", text)
+        self.assertIn("libslirp-dev", text)
+        self.assertIn("-netdev user,id=net0,ipv6=off", text)
         self.assertIn("-device e1000e,netdev=net0", text)
         self.assertIn("-device qemu-xhci,id=xhci", text)
         self.assertIn("-device usb-kbd,bus=xhci.0", text)

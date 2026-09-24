@@ -6,6 +6,8 @@ QEMU_RELEASE_KEY_FPR="CEACC9E15534EBABB82D3FA03353C9CEF108B584"
 QEMU_BASE_URL="https://download.qemu.org"
 QEMU_TARBALL_SHA256="079ffbff8a7111bbc89022107cbabf3bbfd614d5fc9d7cc675991196aca12482"
 QEMU_KEY_URL="https://keys.openpgp.org/vks/v1/by-fingerprint/${QEMU_RELEASE_KEY_FPR}"
+QEMU_SLIRP_MODE="system"
+QEMU_SLIRP_PACKAGE="libslirp-dev"
 
 if [[ $# -lt 1 || $# -gt 2 ]]; then
   echo "usage: $0 OUTPUT_QEMU_SYSTEM [OUTPUT_QEMU_IMG]" >&2
@@ -44,6 +46,13 @@ SOURCE="$WORK/qemu-${QEMU_VERSION}"
 test -d "$SOURCE"
 test "$(tr -d '\r\n' < "$SOURCE/VERSION")" = "$QEMU_VERSION"
 
+if ! pkg-config --exists slirp; then
+  echo "missing required QEMU user-network dependency: $QEMU_SLIRP_PACKAGE" >&2
+  exit 1
+fi
+SLIRP_VERSION="$(pkg-config --modversion slirp)"
+test -n "$SLIRP_VERSION"
+
 cd "$SOURCE"
 ./configure \
   --disable-download \
@@ -53,13 +62,21 @@ cd "$SOURCE"
   --disable-sdl \
   --disable-opengl \
   --disable-curses \
-  --disable-vnc
+  --disable-vnc \
+  --enable-slirp=system
 
 ninja -C build qemu-system-x86_64 qemu-img
 test -x build/qemu-system-x86_64
 test -x build/qemu-img
 mkdir -p "$(dirname "$OUTPUT")"
 cp build/qemu-system-x86_64 "$OUTPUT"
+
+NETDEV_HELP="$("$OUTPUT" -netdev help 2>&1)"
+if ! grep -Eq '(^|[[:space:]])user([[:space:]]|$)' <<<"$NETDEV_HELP"; then
+  echo "QEMU user networking backend missing despite --enable-slirp=$QEMU_SLIRP_MODE" >&2
+  printf '%s\n' "$NETDEV_HELP" >&2
+  exit 1
+fi
 
 DATA_DIR="${OUTPUT}.data"
 rm -rf "$DATA_DIR"
@@ -78,5 +95,5 @@ fi
 sha256sum "$OUTPUT"
 sha256sum "$DATA_DIR/kvmvapic.bin" "$DATA_DIR/vgabios-stdvga.bin"
 if [[ -n "$IMG_OUTPUT" ]]; then sha256sum "$IMG_OUTPUT"; fi
-printf 'QEMU_SOURCE_VERSION=%s\nQEMU_RELEASE_KEY_FPR=%s\nQEMU_DATA_DIR=%s\n' \
-  "$QEMU_VERSION" "$QEMU_RELEASE_KEY_FPR" "$DATA_DIR"
+printf 'QEMU_SOURCE_VERSION=%s\nQEMU_RELEASE_KEY_FPR=%s\nQEMU_SLIRP_MODE=%s\nQEMU_SLIRP_VERSION=%s\nQEMU_DATA_DIR=%s\n' \
+  "$QEMU_VERSION" "$QEMU_RELEASE_KEY_FPR" "$QEMU_SLIRP_MODE" "$SLIRP_VERSION" "$DATA_DIR"

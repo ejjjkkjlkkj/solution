@@ -113,5 +113,29 @@ class ToolchainLockTests(unittest.TestCase):
             )
 
 
+    def test_unsupported_qemu_slirp_mode_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp) / "repo"
+            shutil.copytree(
+                ROOT,
+                work,
+                ignore=shutil.ignore_patterns(".git", "__pycache__", ".pytest_cache"),
+            )
+            lock_path = work / "toolchains.lock.json"
+            lock = json.loads(lock_path.read_text(encoding="utf-8"))
+            lock["qemu"]["slirp_mode"] = "auto"
+            lock_path.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
+
+            result = verify(work)
+            self.assertEqual(result["status"], "FAIL")
+            self.assertTrue(
+                any(
+                    item["field"] == "qemu.slirp_mode"
+                    for item in result["invalid"]
+                ),
+                result,
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

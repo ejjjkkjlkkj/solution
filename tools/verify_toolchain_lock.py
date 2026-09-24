@@ -49,6 +49,17 @@ def _validate_lock(lock: dict[str, Any]) -> list[dict[str, str]]:
         if not HEX64_RE.fullmatch(value):
             invalid.append({"field": f"{section}.{key}", "value": value})
 
+    try:
+        slirp_mode = _string(lock, "qemu", "slirp_mode")
+        slirp_package = _string(lock, "qemu", "slirp_package")
+    except ValueError as exc:
+        invalid.append({"field": "qemu.slirp", "value": str(exc)})
+    else:
+        if slirp_mode != "system":
+            invalid.append({"field": "qemu.slirp_mode", "value": slirp_mode})
+        if slirp_package != "libslirp-dev":
+            invalid.append({"field": "qemu.slirp_package", "value": slirp_package})
+
     actions = lock.get("github_actions")
     if not isinstance(actions, dict) or not actions:
         invalid.append({"field": "github_actions", "value": "missing or invalid mapping"})
@@ -127,6 +138,8 @@ def verify(root: Path = ROOT) -> dict[str, object]:
     sct_commit = _string(lock, "sct", "commit")
     cbmc_version = _string(lock, "cbmc", "version")
     cbmc_hash = _string(lock, "cbmc", "ubuntu_24_04_deb_sha256")
+    qemu_slirp_mode = _string(lock, "qemu", "slirp_mode")
+    qemu_slirp_package = _string(lock, "qemu", "slirp_package")
     actionlint_version = _string(lock, "actionlint", "version")
     actionlint_hash = _string(lock, "actionlint", "linux_amd64_sha256")
 
@@ -146,6 +159,15 @@ def verify(root: Path = ROOT) -> dict[str, object]:
             f"gh release download cbmc-{cbmc_version}",
             f"{cbmc_hash}  ubuntu-24.04-cbmc-{cbmc_version}-Linux.deb",
             "run: bash scripts/install_pinned_framac.sh",
+            f"{qemu_slirp_package}",
+            "run: bash scripts/build_pinned_qemu.sh",
+        ],
+        ".github/workflows/deep-software-gates.yml": [
+            f"{qemu_slirp_package}",
+            "run: bash scripts/build_pinned_qemu.sh",
+        ],
+        ".github/workflows/independent-verification.yml": [
+            f"{qemu_slirp_package}",
             "run: bash scripts/build_pinned_qemu.sh",
         ],
         ".github/workflows/reproducibility.yml": [
@@ -155,6 +177,7 @@ def verify(root: Path = ROOT) -> dict[str, object]:
         ".github/workflows/hardware-hil.yml": [
             f"git clone --depth 1 --branch {primary_tag} --recurse-submodules https://github.com/tianocore/edk2.git",
             f'test "$(git -C edk2 rev-parse HEAD)" = "{primary_commit}"',
+            f"{qemu_slirp_package}",
             "bash scripts/build_pinned_qemu.sh",
         ],
         ".github/workflows/uefi-sct-build.yml": [
@@ -168,6 +191,7 @@ def verify(root: Path = ROOT) -> dict[str, object]:
             f"EDK2_SHA: {sct_edk2_commit}",
             f"SCT_TAG: {sct_tag}",
             f"SCT_SHA: {sct_commit}",
+            f"{qemu_slirp_package}",
             "run: bash scripts/build_pinned_qemu.sh",
         ],
         "scripts/install_pinned_framac.sh": [
@@ -180,6 +204,10 @@ def verify(root: Path = ROOT) -> dict[str, object]:
             f'QEMU_VERSION="{_string(lock, "qemu", "version")}"',
             f'QEMU_RELEASE_KEY_FPR="{_string(lock, "qemu", "release_key_fingerprint")}"',
             f'QEMU_TARBALL_SHA256="{_string(lock, "qemu", "tarball_sha256")}"',
+            f'QEMU_SLIRP_MODE="{qemu_slirp_mode}"',
+            f'QEMU_SLIRP_PACKAGE="{qemu_slirp_package}"',
+            f"--enable-slirp={qemu_slirp_mode}",
+            "-netdev help",
         ],
     }
 

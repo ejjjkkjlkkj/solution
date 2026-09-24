@@ -16,6 +16,7 @@ All notable repository changes are tracked here.
 ### Changed
 - UEFI SCT build/runtime paths now target `RELEASE_GCC` instead of the removed `RELEASE_GCC5` profile.
 - CI workflows use immutable action pins and locked external toolchain inputs.
+- Pinned QEMU builds require and verify the libslirp user-network backend used by SCT runtime networking.
 
 ### Release status
 The package version remains `0.1.0`. No tagged public release has been declared yet.
