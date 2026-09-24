@@ -44,12 +44,13 @@ jobs:
           git clone --depth 1 --branch "$SCT_TAG" https://github.com/tianocore/edk2-test.git
           test "$(git -C edk2-test rev-parse HEAD)" = "$SCT_SHA"
           cp -a edk2-test/uefi-sct/SctPkg ./SctPkg
+          python3 tools/patch_sct_gcc_profile.py SctPkg/build.sh
 
       - name: Build official SCT
         run: |
           chmod +x SctPkg/build.sh
           ./SctPkg/build.sh X64 GCC RELEASE
-          SCT_PACKAGE="$GITHUB_WORKSPACE/Build/UefiSct/RELEASE_GCC5/SctPackageX64"
+          SCT_PACKAGE="$GITHUB_WORKSPACE/Build/UefiSct/RELEASE_GCC/SctPackageX64"
           test -d "$SCT_PACKAGE/X64"
           test -f "$SCT_PACKAGE/SctStartup.nsh"
           test -f "$SCT_PACKAGE/X64/SCT.efi"
@@ -89,7 +90,7 @@ jobs:
 
       - name: Assemble disposable SCT disk
         run: |
-          SCT_PACKAGE="$GITHUB_WORKSPACE/Build/UefiSct/RELEASE_GCC5/SctPackageX64"
+          SCT_PACKAGE="$GITHUB_WORKSPACE/Build/UefiSct/RELEASE_GCC/SctPackageX64"
           PAYLOAD_KB="$(du -sk "$SCT_PACKAGE/X64" | awk '{print $1}')"
           SIZE_MB=$(( (PAYLOAD_KB / 1024) + 256 ))
           if [ "$SIZE_MB" -lt 768 ]; then SIZE_MB=768; fi

@@ -34,21 +34,22 @@ jobs:
       - name: Assemble SCT workspace
         run: |
           cp -a edk2-test/uefi-sct/SctPkg ./SctPkg
+          python3 tools/patch_sct_gcc_profile.py SctPkg/build.sh
 
       - name: Build official UEFI SCT X64
         run: |
           chmod +x SctPkg/build.sh
           ./SctPkg/build.sh X64 GCC RELEASE
-          test -d Build/UefiSct/RELEASE_GCC5/SctPackageX64
-          find Build/UefiSct/RELEASE_GCC5/SctPackageX64 -type f | head -50
+          test -d Build/UefiSct/RELEASE_GCC/SctPackageX64
+          find Build/UefiSct/RELEASE_GCC/SctPackageX64 -type f | head -50
       - name: Hash SCT package
         run: |
-          find Build/UefiSct/RELEASE_GCC5/SctPackageX64 -type f -print0 |
+          find Build/UefiSct/RELEASE_GCC/SctPackageX64 -type f -print0 |
             sort -z |
             xargs -0 sha256sum > sct-sha256.txt
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: uefi-sct-x64
           path: |
-            Build/UefiSct/RELEASE_GCC5/SctPackageX64
+            Build/UefiSct/RELEASE_GCC/SctPackageX64
             sct-sha256.txt
