@@ -8,6 +8,8 @@ Automatic hardware-in-the-loop execution is restricted to pushes on `main`. The 
 
 Physical HIL remains separate from `SOFTWARE_CEILING_PASS`; a missing non-main HIL run cannot be reclassified as software evidence.
 
+`Hardware Boundary Status` is informational on ordinary development-branch pushes. After a `Physical AMD HIL` run completes on `main` or an explicitly dispatched development ref, it is triggered from that completed run, checks the exact HIL head SHA, and enforces the fail-closed `hardware-boundary` CLI. Explicitly dispatched HIL runs are accepted as hardware evidence only for their exact commit; pull-request runs are never accepted as hardware evidence.
+
 A hosted Linux runner builds one immutable OmniProbe.efi and three media forms:
 
 - omni-fat.img for virtual boot
