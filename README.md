@@ -25,8 +25,13 @@ python -m unittest discover -s tests -v
 `SOFTWARE_CEILING_PASS` is allowed only when every required software gate is `PASS`. `NOT_RUN`, `SKIP`, or missing external verification tools remain blockers. The final hardware-only gates are physical UEFI behavior, keyboard scan behavior, real HDA codec/amplifier/speaker output, physical latency/jitter, TPM quote, and OEM-specific behavior.
 
 See `docs/ARCHITECTURE.md` and `SECURITY.md`.
+
 ## Verification boundary
 
-The exact-commit software verdict now includes deterministic IFR mutation fuzzing and CI workflow/toolchain linting. The virtual UEFI proof fixes a QEMU SMBIOS Type 1 UUID and requires OmniProbe to report the same UUID; physical ASUS identity remains a separate HIL obligation.
+The exact-commit software verdict includes deterministic IFR mutation fuzzing and CI workflow/toolchain linting. The virtual UEFI proof fixes a QEMU SMBIOS Type 1 UUID and requires OmniProbe to report the same UUID; physical ASUS identity remains a separate HIL obligation.
 
 See `docs/HARDWARE_ONLY_BOUNDARY.md` for the strict separation between software evidence and physical-only evidence.
+
+## License
+
+This repository is licensed under the Zero-Clause BSD license (`0BSD`). It permits use, copying, modification, and distribution for any purpose without an attribution requirement. See `LICENSE`.
