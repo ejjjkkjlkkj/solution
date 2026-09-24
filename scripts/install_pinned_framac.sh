@@ -18,7 +18,24 @@ export OPAMROOT="$ROOT"
 opam init --bare --disable-sandboxing --no-setup -y default "file://$REPO"
 opam switch create omni-formal "$OCAML_PACKAGE" -y
 eval "$(opam env --switch=omni-formal --set-switch)"
-opam install -y "$FRAMAC_PACKAGE" "$ALT_ERGO_PACKAGE"
+# OPAM package metadata is pinned, but individual source hosts can still
+# return transient 5xx/network errors. Retry the exact same locked install;
+# never change versions or repositories to make the gate pass.
+installed=0
+for attempt in 1 2 3 4; do
+  if opam install -y "$FRAMAC_PACKAGE" "$ALT_ERGO_PACKAGE"; then
+    installed=1
+    break
+  fi
+  if [[ "$attempt" -lt 4 ]]; then
+    echo "Pinned OPAM install attempt $attempt failed; retrying unchanged inputs" >&2
+    sleep $((attempt * 10))
+  fi
+done
+if [[ "$installed" -ne 1 ]]; then
+  echo "Pinned Frama-C/Alt-Ergo installation failed after 4 attempts" >&2
+  exit 1
+fi
 
 frama-c -version | grep -F "33.0 (Arsenic)"
 alt-ergo --version
