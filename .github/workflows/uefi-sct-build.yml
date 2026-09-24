@@ -36,21 +36,6 @@ jobs:
           cp -a edk2-test/uefi-sct/SctPkg ./SctPkg
           python3 tools/patch_sct_gcc_profile.py SctPkg/build.sh
 
-      - name: Adapt SCT GCC profile to pinned EDK II
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          path = Path("SctPkg/build.sh")
-          text = path.read_text(encoding="utf-8")
-          old = 'export TARGET_TOOLS=`get_gcc_version "$CROSS_COMPILE"gcc`'
-          new = "TARGET_TOOLS=GCC"
-          if text.count(old) != 1:
-              raise SystemExit("unexpected SCT build.sh GCC selector")
-          path.write_text(text.replace(old, new), encoding="utf-8")
-          PY
-          grep -F 'TARGET_TOOLS=GCC' SctPkg/build.sh
-
       - name: Build official UEFI SCT X64
         run: |
           chmod +x SctPkg/build.sh
