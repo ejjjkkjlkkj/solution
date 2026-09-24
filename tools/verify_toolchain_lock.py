@@ -206,7 +206,7 @@ def verify(root: Path = ROOT) -> dict[str, object]:
             f'QEMU_TARBALL_SHA256="{_string(lock, "qemu", "tarball_sha256")}"',
             f'QEMU_SLIRP_MODE="{qemu_slirp_mode}"',
             f'QEMU_SLIRP_PACKAGE="{qemu_slirp_package}"',
-            f"--enable-slirp={qemu_slirp_mode}",
+            "--enable-slirp",
             "-netdev help",
         ],
     }
