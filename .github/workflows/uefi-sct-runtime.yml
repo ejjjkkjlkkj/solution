@@ -45,6 +45,7 @@ jobs:
           test "$(git -C edk2-test rev-parse HEAD)" = "$SCT_SHA"
           cp -a edk2-test/uefi-sct/SctPkg ./SctPkg
           python3 tools/patch_sct_gcc_profile.py SctPkg/build.sh
+          python3 tools/patch_sct_efi_header.py SctPkg/Include/Efi.h
 
       - name: Build official SCT
         run: |

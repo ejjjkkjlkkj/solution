@@ -9,6 +9,7 @@ All notable repository changes are tracked here.
 - Deterministic UEFI, QEMU/OVMF, SCT, formal-proof, fuzzing, coverage, and reproducibility gates.
 - Explicit hardware-only boundary and physical HIL workflow.
 - SCT compatibility shim for EDK II stable 202608's non-versioned GCC toolchain profile.
+- SCT compatibility shim for modern EDK II `Base.h`, backporting upstream CPU-marker detection for the pinned 202509 SCT.
 - 0BSD licensing and public contribution metadata.
 
 ### Changed

@@ -36,6 +36,7 @@ jobs:
         run: |
           cp -a edk2-test/uefi-sct/SctPkg ./SctPkg
           python3 tools/patch_sct_gcc_profile.py SctPkg/build.sh
+          python3 tools/patch_sct_efi_header.py SctPkg/Include/Efi.h
 
       - name: Build official UEFI SCT X64
         run: |
