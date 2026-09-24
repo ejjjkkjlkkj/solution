@@ -30,6 +30,15 @@ class SctGccProfilePatchTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             patch_text(text)
 
+    def test_sct_build_checks_out_repository_before_patch_helper(self) -> None:
+        path = Path(".github/workflows/uefi-sct-build.yml")
+        text = path.read_text(encoding="utf-8")
+        checkout = "uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
+        patch = "python3 tools/patch_sct_gcc_profile.py SctPkg/build.sh"
+        self.assertIn(checkout, text)
+        self.assertIn(patch, text)
+        self.assertLess(text.index(checkout), text.index(patch))
+
     def test_workflows_use_modern_sct_output_directory(self) -> None:
         for path in (
             Path(".github/workflows/uefi-sct-build.yml"),
