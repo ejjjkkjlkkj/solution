@@ -18,3 +18,5 @@ After the software ceiling closes, remaining uncertainty is limited to phenomena
 QEMU/OVMF, VMware compatibility, parsers, HII/IFR semantics, model checking, sanitizers, fuzzing, static analysis, formal proofs, UEFI SCT on OVMF, record/replay, workflow policy, toolchain pinning, reproducibility, provenance, and evidence verification remain software obligations and must not be relabeled as hardware limitations.
 
 Physical HIL is tracked separately from `SOFTWARE_CEILING_PASS`. A software pass therefore does not claim that the physical machine, codec, speaker, keyboard, TPM, or OEM firmware has been validated.
+
+The hardware manifest accepts only canonical `Physical AMD HIL` runs bound to the exact commit. Automatic `push` runs on `main` and authorized `workflow_dispatch` runs are valid hardware evidence sources; pull-request runs are rejected. The enforced hardware-status workflow is evaluated after the privileged HIL run completes, so an early snapshot cannot masquerade as a final hardware verdict.
