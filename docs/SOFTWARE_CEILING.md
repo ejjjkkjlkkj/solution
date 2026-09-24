@@ -31,7 +31,7 @@ A property is not allowed to remain a hardware question if it can be reproduced 
 ## Pinned supply-chain inputs
 
 EDK II stable 202608 is pinned to commit 2970e5699ba6267f3384ffab20f96647578aebc8.
-SCT runtime/build uses edk2-test-stable202509 commit 2b2a16ac239cd89d778cb79ae6e42c533fc4c25a with edk2-stable202508 commit d46aa46c8361194521391aa581593e556c707c6e.
+SCT runtime/build uses edk2-test-stable202509 commit 2b2a16ac239cd89d778cb79ae6e42c533fc4c25a with the same edk2-stable202608 commit 2970e5699ba6267f3384ffab20f96647578aebc8 used by the primary OVMF/OmniProbe proof path.
 
 GitHub artifact attestations are treated as SLSA v1.0 Build Level 2 evidence. This repository does not claim Build Level 3 solely from an attestation.
 

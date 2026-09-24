@@ -15,8 +15,8 @@ permissions:
   contents: read
 
 env:
-  EDK2_TAG: edk2-stable202508
-  EDK2_SHA: d46aa46c8361194521391aa581593e556c707c6e
+  EDK2_TAG: edk2-stable202608
+  EDK2_SHA: 2970e5699ba6267f3384ffab20f96647578aebc8
   SCT_TAG: edk2-test-stable202509
   SCT_SHA: 2b2a16ac239cd89d778cb79ae6e42c533fc4c25a
 
