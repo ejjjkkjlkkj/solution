@@ -74,6 +74,65 @@ class CiCeilingManifestTests(unittest.TestCase):
             "HARDWARE_BOUNDARY_PASS",
         )
 
+    def test_hardware_manifest_accepts_explicit_dispatch(self):
+        runs = [
+            self.make_run(
+                name,
+                run_number=i + 1,
+                event="workflow_dispatch",
+            )
+            for i, name in enumerate(HARDWARE_WORKFLOW_TO_GATES)
+        ]
+        manifest, details = build_hardware({"workflow_runs": runs}, self.SHA)
+        self.assertTrue(details["ready"])
+        self.assertEqual(
+            details["accepted_events"],
+            ["push", "workflow_dispatch"],
+        )
+        self.assertTrue(
+            all(status == "PASS" for status in manifest.values())
+        )
+        target = next(iter(HARDWARE_WORKFLOW_TO_GATES))
+        self.assertEqual(
+            details["workflows"][target]["event"],
+            "workflow_dispatch",
+        )
+
+    def test_hardware_manifest_rejects_pull_request_evidence(self):
+        runs = [
+            self.make_run(
+                name,
+                run_number=i + 1,
+                event="pull_request",
+            )
+            for i, name in enumerate(HARDWARE_WORKFLOW_TO_GATES)
+        ]
+        manifest, details = build_hardware({"workflow_runs": runs}, self.SHA)
+        self.assertFalse(details["ready"])
+        self.assertTrue(
+            all(status == "MISSING" for status in manifest.values())
+        )
+
+    def test_software_manifest_rejects_workflow_dispatch_evidence(self):
+        names = list(WORKFLOW_TO_GATES)
+        runs = [
+            self.make_run(name, run_number=i + 1)
+            for i, name in enumerate(names)
+        ]
+        target = names[0]
+        runs = [run for run in runs if run["name"] != target]
+        runs.append(
+            self.make_run(
+                target,
+                run_number=100,
+                event="workflow_dispatch",
+            )
+        )
+        manifest, details = build({"workflow_runs": runs}, self.SHA)
+        self.assertFalse(details["ready"])
+        for gate in WORKFLOW_TO_GATES[target]:
+            self.assertEqual(manifest[gate], "MISSING")
+
     def test_missing_or_in_progress_is_not_ready(self):
         names = list(WORKFLOW_TO_GATES)
         runs = [
