@@ -25,20 +25,21 @@ def decode_summary_bytes(data: bytes) -> str:
     if data.startswith(codecs.BOM_UTF8):
         return data.decode("utf-8-sig")
 
-    try:
-        return data.decode("utf-8")
-    except UnicodeDecodeError as utf8_error:
-        sample = data[:4096]
-        pairs = len(sample) // 2
-        if pairs >= 8:
-            even_nuls = sum(byte == 0 for byte in sample[0 : pairs * 2 : 2])
-            odd_nuls = sum(byte == 0 for byte in sample[1 : pairs * 2 : 2])
-            threshold = max(8, int(pairs * 0.30))
-            if odd_nuls >= threshold and odd_nuls >= even_nuls * 4:
-                return data.decode("utf-16-le")
-            if even_nuls >= threshold and even_nuls >= odd_nuls * 4:
-                return data.decode("utf-16-be")
-        raise utf8_error
+    # BOM-less UTF-16 containing mostly ASCII is also valid UTF-8 bytewise
+    # because NUL is a legal UTF-8 code point. Detect a strong alternating-NUL
+    # signature before attempting UTF-8 so result markers cannot be hidden.
+    sample = data[:4096]
+    pairs = len(sample) // 2
+    if pairs >= 8:
+        even_nuls = sum(byte == 0 for byte in sample[0 : pairs * 2 : 2])
+        odd_nuls = sum(byte == 0 for byte in sample[1 : pairs * 2 : 2])
+        threshold = max(8, int(pairs * 0.30))
+        if odd_nuls >= threshold and odd_nuls >= even_nuls * 4:
+            return data.decode("utf-16-le")
+        if even_nuls >= threshold and even_nuls >= odd_nuls * 4:
+            return data.decode("utf-16-be")
+
+    return data.decode("utf-8")
 
 
 def parse(text: str) -> dict[str, object]:
