@@ -28,8 +28,12 @@ dist/
 *.sha256
 protocol_probe
 protocol_cov
+protocol_test
+mm_fuzz
 coverage_test
 coverage.json
+coverage.txt
+ifr-fuzz-summary.json
 
 # UEFI, QEMU, SCT and HIL generated artifacts
 edk2/
