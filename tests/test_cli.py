@@ -25,6 +25,23 @@ class CliExitStatusTests(unittest.TestCase):
         manifest = {gate: "PASS" for gate in ceiling.HARDWARE_GATES}
         self.assertEqual(self._run_hardware_boundary(manifest), 0)
 
+    def test_voice_normalize_cli_outputs_renderer_neutral_tokens(self):
+        stdout = io.StringIO()
+        with patch(
+            "sys.argv",
+            ["omni", "voice-normalize", "USB 8192 ?", "--lang", "fr"],
+        ):
+            with redirect_stdout(stdout):
+                rc = cli.main()
+        self.assertEqual(rc, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload[0], {"kind": "acronym", "text": "U S B"})
+        self.assertEqual(
+            payload[1],
+            {"kind": "number", "text": "huit mille cent quatre-vingt-douze"},
+        )
+        self.assertEqual(payload[2], {"kind": "clause", "text": "question"})
+
 
 if __name__ == "__main__":
     unittest.main()
