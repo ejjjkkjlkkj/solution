@@ -28,10 +28,9 @@ class UefiSctRuntimeWorkflowTests(unittest.TestCase):
 
         self.assertIn("OMNI_SCT_RETURNED", text)
         self.assertIn("::/Sct/Overall", text)
-        self.assertIn(
-            'python tools/sct_summary.py "$SUMMARY_LOG" --json-out sct-summary.json --strict',
-            text,
-        )
+        self.assertIn('python tools/sct_summary.py "$SUMMARY_LOG"', text)
+        self.assertIn("--baseline ci/ovmf-sct-known-failures.json", text)
+        self.assertIn("--json-out sct-summary.json --strict", text)
 
     def test_runtime_preserves_progress_diagnostics(self) -> None:
         text = WORKFLOW.read_text(encoding="utf-8")

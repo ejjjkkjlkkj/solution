@@ -274,7 +274,13 @@ jobs:
           test -n "$SUMMARY_EKL"
           test -s "$SUMMARY_LOG"
           test -s "$SUMMARY_EKL"
-          python tools/sct_summary.py "$SUMMARY_LOG" --json-out sct-summary.json --strict
+          # OVMF/QEMU is an external pinned reference platform. Keep running the
+          # complete SCT suite, but fail on any drift from its reviewed exact
+          # known-failure envelope instead of mislabeling upstream failures as
+          # regressions in this repository.
+          python tools/sct_summary.py "$SUMMARY_LOG" \
+            --baseline ci/ovmf-sct-known-failures.json \
+            --json-out sct-summary.json --strict
 
       - name: Hash runtime evidence
         if: always()
