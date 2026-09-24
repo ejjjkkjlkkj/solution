@@ -76,16 +76,18 @@ jobs:
           cd edk2
           export PYTHON_COMMAND=python3
           source edksetup.sh BaseTools
-          build -a X64 -t GCC -b RELEASE -p OvmfPkg/OvmfPkgX64.dsc
+          # QEMU 11's host UEFI variable service implements the protected
+          # authenticated-variable path without guest SMM. Secure Boot support
+          # is compiled in, while the empty host varstore starts in setup mode.
+          build -a X64 -t GCC -b RELEASE -p OvmfPkg/OvmfPkgX64.dsc \
+            -D QEMU_PV_VARS=TRUE \
+            -D SECURE_BOOT_ENABLE=TRUE
           build -a X64 -t GCC -b RELEASE -p ShellPkg/ShellPkg.dsc
-          OVMF_CODE="$(find Build -path '*/FV/OVMF_CODE.fd' | head -1)"
-          OVMF_VARS="$(find Build -path '*/FV/OVMF_VARS.fd' | head -1)"
+          OVMF_FD="$(find Build -path '*/FV/OVMF.fd' | head -1)"
           SHELL_EFI="$(find Build -iname Shell.efi | head -1)"
-          test -n "$OVMF_CODE"
-          test -n "$OVMF_VARS"
+          test -n "$OVMF_FD"
           test -n "$SHELL_EFI"
-          cp "$OVMF_CODE" "$GITHUB_WORKSPACE/OVMF_CODE.fd"
-          cp "$OVMF_VARS" "$GITHUB_WORKSPACE/OVMF_VARS.fd"
+          cp "$OVMF_FD" "$GITHUB_WORKSPACE/OVMF.qemuvars.fd"
           cp "$SHELL_EFI" "$GITHUB_WORKSPACE/Shell.efi"
 
       - name: Assemble disposable SCT disk
@@ -167,27 +169,25 @@ jobs:
 
       - name: Execute official SCT against pinned OVMF
         run: |
-          cp OVMF_VARS.fd OVMF_SCT_VARS.fd
-          rm -f sct-serial.log SCT-DONE.TXT
-          truncate -s 64M nvme-test.img
+          rm -f sct-serial.log SCT-DONE.TXT uefi-vars.json
+          touch uefi-vars.json
 
           "$GITHUB_WORKSPACE/qemu-system-x86_64" \
             -L "$GITHUB_WORKSPACE/qemu-system-x86_64.data" \
-            -machine q35,accel=tcg \
+            -machine q35,accel=tcg,sata=off \
             -m 2048 \
             -display none \
             -vga none \
             -monitor none \
             -serial file:sct-serial.log \
+            -bios OVMF.qemuvars.fd \
+            -device uefi-vars-x64,jsonfile=uefi-vars.json \
             -netdev user,id=net0,ipv6=off \
             -device e1000e,netdev=net0 \
             -device qemu-xhci,id=xhci \
             -device usb-kbd,bus=xhci.0 \
-            -drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.fd \
-            -drive if=pflash,format=raw,file=OVMF_SCT_VARS.fd \
-            -drive file=sct-runtime.img,format=raw \
-            -drive if=none,id=nvme0,file=nvme-test.img,format=raw \
-            -device nvme,drive=nvme0,serial=OMNINVME0001 &
+            -drive if=none,id=sctnvme,file=sct-runtime.img,format=raw \
+            -device nvme,drive=sctnvme,serial=OMNISCT0001 &
           QEMU_PID=$!
 
           cleanup_qemu() {
@@ -282,6 +282,7 @@ jobs:
             if test -f sct-summary.json; then sha256sum sct-summary.json; fi
             if test -f sct-serial.log; then sha256sum sct-serial.log; fi
             if test -f sct-profile-from-image.ini; then sha256sum sct-profile-from-image.ini; fi
+            if test -f uefi-vars.json; then sha256sum uefi-vars.json; fi
             find sct-results -type f -print0 2>/dev/null | sort -z | xargs -0 -r sha256sum
           } > sct-runtime-sha256.txt
 
@@ -294,5 +295,6 @@ jobs:
             sct-summary.json
             sct-serial.log
             sct-profile-from-image.ini
+            uefi-vars.json
             sct-runtime-sha256.txt
             sct-results/

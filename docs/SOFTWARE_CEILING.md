@@ -26,6 +26,8 @@ A property is not allowed to remain a hardware question if it can be reproduced 
 - provenance statement binding the bundle SHA-256 to the exact Git commit
 - GitHub/Sigstore provenance attestation plus verification
 - official UEFI SCT build and runtime against pinned OVMF
+- SCT runtime OVMF built with QEMU host UEFI variables plus Secure Boot/authenticated-variable support
+- SCT runtime storage exposed as NVMe with Q35 SATA disabled, so ATA/SCSI are outside that deterministic platform profile
 - physical-media preparation + verifier bound to the expected EFI SHA-256 and a fresh 256-bit challenge
 
 ## Pinned supply-chain inputs
