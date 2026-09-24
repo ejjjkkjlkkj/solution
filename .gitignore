@@ -25,6 +25,7 @@ dist/
 *.profdata
 *.gcda
 *.gcno
+*.sha256
 protocol_probe
 protocol_cov
 coverage_test
@@ -55,6 +56,14 @@ omni-challenge.txt
 omni-run-binding.json
 omni-evidence.txt
 physical-evidence-manifest.json
+psexec-identity.json
+hardware-inventory.json
+hil-artifact-hashes.json
+hardware-manifest.json
+hardware-boundary.json
+hardware-details.json
+uefi-vars.json
+qemu-build-evidence.txt
 
 # Tool bootstrap outputs
 actionlint
