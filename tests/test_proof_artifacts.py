@@ -103,7 +103,7 @@ class ProvenanceTests(unittest.TestCase):
             env = {
                 "GITHUB_REPOSITORY": "ejjjkkjlkkj/solution",
                 "GITHUB_SHA": sha,
-                "GITHUB_REF": "refs/heads/dev/software-ceiling-1.2.0",
+                "GITHUB_REF": "refs/heads/test/provenance-fixture",
                 "GITHUB_RUN_ID": "123456",
                 "GITHUB_SERVER_URL": "https://github.com",
             }

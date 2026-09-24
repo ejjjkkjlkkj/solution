@@ -19,14 +19,15 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install build prerequisites
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential nasm uuid-dev python3-pip
       - name: Checkout matching EDK II
         run: |
-          git clone --depth 1 --branch edk2-stable202508 --recurse-submodules https://github.com/tianocore/edk2.git
-          test "$(git -C edk2 rev-parse HEAD)" = "d46aa46c8361194521391aa581593e556c707c6e"
+          git clone --depth 1 --branch edk2-stable202608 --recurse-submodules https://github.com/tianocore/edk2.git
+          test "$(git -C edk2 rev-parse HEAD)" = "2970e5699ba6267f3384ffab20f96647578aebc8"
       - name: Checkout official edk2-test SCT
         run: |
           git clone --depth 1 --branch edk2-test-stable202509 https://github.com/tianocore/edk2-test.git
@@ -34,21 +35,24 @@ jobs:
       - name: Assemble SCT workspace
         run: |
           cp -a edk2-test/uefi-sct/SctPkg ./SctPkg
+          python3 tools/patch_sct_gcc_profile.py SctPkg/build.sh
+          python3 tools/patch_sct_efi_header.py SctPkg/Include/Efi.h
+          python3 tools/patch_sct_deprecated_protocols.py SctPkg
 
       - name: Build official UEFI SCT X64
         run: |
           chmod +x SctPkg/build.sh
           ./SctPkg/build.sh X64 GCC RELEASE
-          test -d Build/UefiSct/RELEASE_GCC5/SctPackageX64
-          find Build/UefiSct/RELEASE_GCC5/SctPackageX64 -type f | head -50
+          test -d Build/UefiSct/RELEASE_GCC/SctPackageX64
+          find Build/UefiSct/RELEASE_GCC/SctPackageX64 -type f | head -50
       - name: Hash SCT package
         run: |
-          find Build/UefiSct/RELEASE_GCC5/SctPackageX64 -type f -print0 |
+          find Build/UefiSct/RELEASE_GCC/SctPackageX64 -type f -print0 |
             sort -z |
             xargs -0 sha256sum > sct-sha256.txt
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: uefi-sct-x64
           path: |
-            Build/UefiSct/RELEASE_GCC5/SctPackageX64
+            Build/UefiSct/RELEASE_GCC/SctPackageX64
             sct-sha256.txt

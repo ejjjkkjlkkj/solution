@@ -2,6 +2,14 @@
 
 This workflow deliberately does not modify ASUS OEM firmware.
 
+## Privileged trigger policy
+
+Automatic hardware-in-the-loop execution is restricted to pushes on `main`. The Windows self-hosted stage runs selected validation under `NT AUTHORITY\\SYSTEM`, so development-branch pushes must not launch it implicitly. Testing another ref requires an explicit `workflow_dispatch` by an authorized operator.
+
+Physical HIL remains separate from `SOFTWARE_CEILING_PASS`; a missing non-main HIL run cannot be reclassified as software evidence.
+
+`Hardware Boundary Status` is informational on ordinary development-branch pushes. After a `Physical AMD HIL` run completes on `main` or any explicitly dispatched non-main ref, it is triggered from that completed run, checks the exact HIL head SHA, and enforces the fail-closed `hardware-boundary` CLI. Explicitly dispatched HIL runs are accepted as hardware evidence only for their exact commit; pull-request runs are never accepted as hardware evidence.
+
 A hosted Linux runner builds one immutable OmniProbe.efi and three media forms:
 
 - omni-fat.img for virtual boot

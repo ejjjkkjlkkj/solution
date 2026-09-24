@@ -26,12 +26,14 @@ A property is not allowed to remain a hardware question if it can be reproduced 
 - provenance statement binding the bundle SHA-256 to the exact Git commit
 - GitHub/Sigstore provenance attestation plus verification
 - official UEFI SCT build and runtime against pinned OVMF
+- SCT runtime OVMF built with QEMU host UEFI variables plus Secure Boot/authenticated-variable support
+- SCT runtime storage exposed as NVMe with Q35 SATA disabled, so ATA/SCSI are outside that deterministic platform profile
 - physical-media preparation + verifier bound to the expected EFI SHA-256 and a fresh 256-bit challenge
 
 ## Pinned supply-chain inputs
 
 EDK II stable 202608 is pinned to commit 2970e5699ba6267f3384ffab20f96647578aebc8.
-SCT runtime/build uses edk2-test-stable202509 commit 2b2a16ac239cd89d778cb79ae6e42c533fc4c25a with edk2-stable202508 commit d46aa46c8361194521391aa581593e556c707c6e.
+SCT runtime/build uses edk2-test-stable202509 commit 2b2a16ac239cd89d778cb79ae6e42c533fc4c25a with the same edk2-stable202608 commit 2970e5699ba6267f3384ffab20f96647578aebc8 used by the primary OVMF/OmniProbe proof path. The pinned SCT 202509 build script is deterministically adapted from its removed `GCC5` toolchain name to EDK II 202608's `GCC` profile; any unexpected upstream script drift fails closed.
 
 GitHub artifact attestations are treated as SLSA v1.0 Build Level 2 evidence. This repository does not claim Build Level 3 solely from an attestation.
 
@@ -67,3 +69,10 @@ Every external GitHub Action is pinned to a 40-hex commit SHA. Local actions are
 Evidence workflows must use explicit runner generations such as `ubuntu-24.04` or `windows-2025`; mutable labels such as `ubuntu-latest`, `windows-latest`, and `macos-latest` are blocking policy violations.
 
 The mandatory workflow-policy gate also rejects `continue-on-error: true`, preventing later edits from silently weakening the software ceiling.
+## Additional mandatory gates
+
+The software ceiling includes the deterministic `IFR Parser Fuzz` gate and the `CI Workflow Lint` gate. The latter validates workflow syntax, immutable action references, repository workflow policy, and the locked external verification toolchain.
+
+The QEMU/OVMF proof uses a deterministic SMBIOS Type 1 UUID and requires OmniProbe to expose that identity in initial and record/replay execution. This is software evidence only. Matching the UUID of the real ASUS platform remains part of physical HIL and is not a prerequisite for `SOFTWARE_CEILING_PASS`.
+
+The remaining physical-only uncertainty is defined in `docs/HARDWARE_ONLY_BOUNDARY.md`.
