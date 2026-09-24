@@ -5,6 +5,7 @@ import unittest
 
 
 WORKFLOW = pathlib.Path(".github/workflows/uefi-sct-runtime.yml")
+BUILD_WORKFLOW = pathlib.Path(".github/workflows/uefi-sct-build.yml")
 PROFILE = pathlib.Path("ci/ovmf-sct-platform.ini")
 
 
@@ -22,6 +23,14 @@ class UefiSctRuntimeWorkflowTests(unittest.TestCase):
         self.assertIn(fresh, text)
         self.assertIn(resume, text)
         self.assertLess(text.index(remove_marker), text.index(fresh))
+
+    def test_sct_workflows_adapt_removed_gcc5_profile(self) -> None:
+        for workflow in (BUILD_WORKFLOW, WORKFLOW):
+            text = workflow.read_text(encoding="utf-8")
+            self.assertIn("Adapt SCT GCC profile to pinned EDK II", text)
+            self.assertIn("TARGET_TOOLS=GCC", text)
+            self.assertIn("RELEASE_GCC/SctPackageX64", text)
+            self.assertNotIn("RELEASE_GCC5", text)
 
     def test_runtime_requires_completion_and_real_sct_results(self) -> None:
         text = WORKFLOW.read_text(encoding="utf-8")
