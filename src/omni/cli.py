@@ -4,7 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
-from . import ceiling, firmware, ifr
+from . import ceiling, firmware, ifr, voice_frontend
 
 
 def _load_manifest(path: Path, label: str) -> dict[str, str]:
@@ -27,6 +27,10 @@ def main() -> int:
     hii = sub.add_parser("ifr-inspect")
     hii.add_argument("package_list")
 
+    speech = sub.add_parser("voice-normalize")
+    speech.add_argument("text")
+    speech.add_argument("--lang", choices=("fr", "en"), default="fr")
+
     sw = sub.add_parser("software-ceiling")
     sw.add_argument("manifest", type=Path)
 
@@ -43,6 +47,16 @@ def main() -> int:
         return 0
     if args.command == "ifr-inspect":
         print(json.dumps(ifr.inspect_file(args.package_list), indent=2))
+        return 0
+    if args.command == "voice-normalize":
+        tokens = voice_frontend.normalize_for_speech(args.text, args.lang)
+        print(
+            json.dumps(
+                [{"kind": token.kind.value, "text": token.text} for token in tokens],
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
         return 0
     if args.command == "software-ceiling":
         result = ceiling.evaluate(_load_manifest(args.manifest, "software ceiling"))
