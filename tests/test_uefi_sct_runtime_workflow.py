@@ -5,6 +5,7 @@ import unittest
 
 
 WORKFLOW = pathlib.Path(".github/workflows/uefi-sct-runtime.yml")
+PROFILE = pathlib.Path("ci/ovmf-sct-platform.ini")
 
 
 class UefiSctRuntimeWorkflowTests(unittest.TestCase):
@@ -39,6 +40,27 @@ class UefiSctRuntimeWorkflowTests(unittest.TestCase):
         self.assertIn("dump_sct_diagnostics", text)
         self.assertIn("trap on_termination TERM INT HUP", text)
         self.assertIn("SCT runtime received a termination signal", text)
+
+    def test_runtime_binds_an_explicit_qemu_platform_profile(self) -> None:
+        text = WORKFLOW.read_text(encoding="utf-8")
+        profile = PROFILE.read_text(encoding="utf-8")
+
+        self.assertIn('cp ci/ovmf-sct-platform.ini "$SCT_PROFILE"', text)
+        self.assertIn("cmp -s ci/ovmf-sct-platform.ini sct-profile-from-image.ini", text)
+        self.assertIn("-vga none", text)
+        self.assertNotIn("-net none", text)
+        self.assertIn("-device e1000e,netdev=net0", text)
+        self.assertIn("-device qemu-xhci,id=xhci", text)
+        self.assertIn("-device usb-kbd,bus=xhci.0", text)
+        self.assertIn("-device nvme,drive=nvme0,serial=OMNINVME0001", text)
+
+        self.assertIn("GraphicalConsoleDevices   = no", profile)
+        self.assertIn("BootFromNetworkDevices    = yes", profile)
+        self.assertIn("UsbBusSupport             = yes", profile)
+        self.assertIn("NVMExpressPassThru        = yes", profile)
+        self.assertIn("UEFIIPv6Support           = no", profile)
+        self.assertIn("BlueToothClassicSupport   = no", profile)
+        self.assertIn("IPSecSupport              = no", profile)
 
 
 if __name__ == "__main__":

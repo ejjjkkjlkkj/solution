@@ -54,6 +54,16 @@ jobs:
           test -f "$SCT_PACKAGE/SctStartup.nsh"
           test -f "$SCT_PACKAGE/X64/SCT.efi"
 
+          # Upstream ships an all-features-enabled EfiCompliant.ini. Replace it
+          # with the exact capabilities of this deterministic headless QEMU
+          # platform so platform-specific assertions describe the system under
+          # test instead of claiming absent Bluetooth/IPsec/TLS/etc. hardware.
+          SCT_PROFILE="$SCT_PACKAGE/X64/Dependency/EfiCompliantBBTest/EfiCompliant.ini"
+          test -f "$SCT_PROFILE"
+          cp ci/ovmf-sct-platform.ini "$SCT_PROFILE"
+          cmp -s ci/ovmf-sct-platform.ini "$SCT_PROFILE"
+          sha256sum ci/ovmf-sct-platform.ini "$SCT_PROFILE"
+
       - name: Build pinned OVMF and UEFI Shell
         run: |
           make -C edk2/BaseTools
@@ -149,6 +159,8 @@ jobs:
           grep -a -q 'Sct -r -a -f -v' startup-from-image.nsh
           grep -a -q 'Sct -c -f -v' startup-from-image.nsh
           grep -a -q 'OMNI_SCT_RETURNED' startup-from-image.nsh
+          mtype -i sct-runtime.img ::/Sct/Dependency/EfiCompliantBBTest/EfiCompliant.ini > sct-profile-from-image.ini
+          cmp -s ci/ovmf-sct-platform.ini sct-profile-from-image.ini
           mdir -i sct-runtime.img ::/
           mdir -i sct-runtime.img ::/Sct
 
@@ -156,18 +168,25 @@ jobs:
         run: |
           cp OVMF_VARS.fd OVMF_SCT_VARS.fd
           rm -f sct-serial.log SCT-DONE.TXT
+          truncate -s 64M nvme-test.img
 
           "$GITHUB_WORKSPACE/qemu-system-x86_64" \
             -L "$GITHUB_WORKSPACE/qemu-system-x86_64.data" \
             -machine q35,accel=tcg \
             -m 2048 \
             -display none \
+            -vga none \
             -monitor none \
             -serial file:sct-serial.log \
-            -net none \
+            -netdev user,id=net0,ipv6=off \
+            -device e1000e,netdev=net0 \
+            -device qemu-xhci,id=xhci \
+            -device usb-kbd,bus=xhci.0 \
             -drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.fd \
             -drive if=pflash,format=raw,file=OVMF_SCT_VARS.fd \
-            -drive file=sct-runtime.img,format=raw &
+            -drive file=sct-runtime.img,format=raw \
+            -drive if=none,id=nvme0,file=nvme-test.img,format=raw \
+            -device nvme,drive=nvme0,serial=OMNINVME0001 &
           QEMU_PID=$!
 
           cleanup_qemu() {
@@ -261,6 +280,7 @@ jobs:
             if test -f SCT-DONE.TXT; then sha256sum SCT-DONE.TXT; fi
             if test -f sct-summary.json; then sha256sum sct-summary.json; fi
             if test -f sct-serial.log; then sha256sum sct-serial.log; fi
+            if test -f sct-profile-from-image.ini; then sha256sum sct-profile-from-image.ini; fi
             find sct-results -type f -print0 2>/dev/null | sort -z | xargs -0 -r sha256sum
           } > sct-runtime-sha256.txt
 
@@ -272,5 +292,6 @@ jobs:
             SCT-DONE.TXT
             sct-summary.json
             sct-serial.log
+            sct-profile-from-image.ini
             sct-runtime-sha256.txt
             sct-results/
