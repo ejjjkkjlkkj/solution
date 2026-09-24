@@ -178,16 +178,46 @@ jobs:
           }
           trap cleanup_qemu EXIT
 
+          dump_sct_diagnostics() {
+            echo "---- SCT serial diagnostics ----" >&2
+            if test -f sct-serial.log; then
+              wc -c sct-serial.log >&2 || true
+              tail -80 sct-serial.log >&2 || true
+            else
+              echo "sct-serial.log not created yet" >&2
+            fi
+            echo "-------------------------------" >&2
+          }
+
+          on_termination() {
+            trap - EXIT TERM INT HUP
+            echo "SCT runtime received a termination signal" >&2
+            dump_sct_diagnostics
+            cleanup_qemu
+            exit 143
+          }
+          trap on_termination TERM INT HUP
+
           deadline=$((SECONDS + 3300))
+          next_heartbeat=$((SECONDS + 120))
           marker_seen=0
           while kill -0 "$QEMU_PID" 2>/dev/null; do
             if test -f sct-serial.log && grep -a -q 'OMNI_SCT_RETURNED' sct-serial.log; then
               marker_seen=1
               break
             fi
+            if [ "$SECONDS" -ge "$next_heartbeat" ]; then
+              echo "SCT runtime heartbeat: ${SECONDS}s elapsed"
+              if test -f sct-serial.log; then
+                printf 'serial_bytes='
+                wc -c < sct-serial.log
+                tail -20 sct-serial.log || true
+              fi
+              next_heartbeat=$((SECONDS + 120))
+            fi
             if [ "$SECONDS" -ge "$deadline" ]; then
               echo "SCT runtime timed out before the official launcher returned" >&2
-              tail -200 sct-serial.log >&2 || true
+              dump_sct_diagnostics
               exit 1
             fi
             sleep 5
@@ -199,7 +229,7 @@ jobs:
             QEMU_RC=$?
             set -e
             echo "QEMU exited before the SCT completion marker: $QEMU_RC" >&2
-            tail -200 sct-serial.log >&2 || true
+            dump_sct_diagnostics
             exit 1
           fi
 
@@ -209,7 +239,7 @@ jobs:
 
           # Stop the emulator only after the official SCT launcher has returned.
           cleanup_qemu
-          trap - EXIT
+          trap - EXIT TERM INT HUP
 
       - name: Extract and strictly analyze SCT results
         run: |

@@ -32,6 +32,14 @@ class UefiSctRuntimeWorkflowTests(unittest.TestCase):
             text,
         )
 
+    def test_runtime_preserves_progress_diagnostics(self) -> None:
+        text = WORKFLOW.read_text(encoding="utf-8")
+
+        self.assertIn("SCT runtime heartbeat:", text)
+        self.assertIn("dump_sct_diagnostics", text)
+        self.assertIn("trap on_termination TERM INT HUP", text)
+        self.assertIn("SCT runtime received a termination signal", text)
+
 
 if __name__ == "__main__":
     unittest.main()

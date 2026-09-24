@@ -6,9 +6,17 @@ The repository is not a PsExec clone. It develops a cross-layer research stack f
 
 ## Current bootstrap
 
+Run directly from the source tree; no editable install is required.
+
 ```powershell
-python -m pip install -e .
-omni toolchain
+$env:PYTHONPATH = "src"
+python -m omni.cli toolchain
+python -m unittest discover -s tests -v
+```
+
+```bash
+export PYTHONPATH=src
+python -m omni.cli toolchain
 python -m unittest discover -s tests -v
 ```
 
