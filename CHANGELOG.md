@@ -17,6 +17,8 @@ All notable repository changes are tracked here.
 - UEFI SCT build/runtime paths now target `RELEASE_GCC` instead of the removed `RELEASE_GCC5` profile.
 - CI workflows use immutable action pins and locked external toolchain inputs.
 - Pinned QEMU builds require and verify the libslirp user-network backend used by SCT runtime networking.
+- Hardware-boundary aggregation now accepts exact-commit authorized `workflow_dispatch` HIL evidence while software-ceiling aggregation remains push-only.
+- Final hardware-boundary enforcement now runs from completed Physical AMD HIL runs instead of taking a premature `main` push snapshot.
 
 ### Release status
 The package version remains `0.1.0`. No tagged public release has been declared yet.
