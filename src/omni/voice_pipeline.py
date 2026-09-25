@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from .voice_frontend import Language, TokenKind, normalize_for_speech
-from .voice_phonemes import PhonemeId, frontend_phonemes, validate_frontend_stream
+from .voice_phonemes import (\n    FRONTEND_STREAM_VERSION,\n    PhonemeId,\n    frontend_phonemes,\n    validate_frontend_stream,\n)
 
 MAX_TEXT_CHARS = 4096
 MAX_STREAM_BYTES = 32768
