@@ -7,7 +7,7 @@ The speech path is split into independent, testable layers.
 3. `voice_pipeline.py` compiles semantic tokens into a bounded stream suitable for a firmware renderer.
 4. `voice_quality.py` validates 48 kHz PCM transport hygiene before audio is accepted.
 
-The firmware contract is mirrored by `include/omni_voice_frontend.h`. Existing phoneme/event IDs are versioned and must not be silently renumbered.
+The firmware contract is mirrored by `include/omni_voice_frontend.h`. Existing phoneme/event IDs are versioned and must not be silently renumbered. The header also pins the text/stream bounds and the 48 kHz PCM channel ceiling; CI verifies those values stay identical to the Python reference implementation.
 
 ## Clean PCM gate
 
