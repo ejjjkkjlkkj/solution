@@ -83,6 +83,10 @@ typedef struct {
   UINTN PinConnectionListLength;
   UINTN PinFirstConnection;
   UINTN RouteEvidence;
+  UINTN PinDefaultDevice;
+  UINTN PinPortConnectivity;
+  UINTN PinSelectionScore;
+  UINTN AnalogPinCandidates;
 
   /* Read-only HDA DMA/stream descriptor capability evidence. */
   UINTN InputStreams;
@@ -811,6 +815,7 @@ STATIC VOID ProbeHdaCodecTopology (
   UINTN StartNode;
   UINTN NodeCount;
   UINTN Index;
+  UINTN BestPinScore;
 
   if ((PciIo == NULL) || (Stats == NULL) || (Stats->CodecBitmap == 0)) return;
 
@@ -859,10 +864,12 @@ STATIC VOID ProbeHdaCodecTopology (
   NodeCount = Response & 0xFF;
   Stats->WidgetStartNode = StartNode;
   Stats->WidgetCount = NodeCount;
+  BestPinScore = 0;
 
   for (Index = 0; Index < NodeCount; ++Index) {
     UINTN Node;
     UINTN WidgetType;
+
     Node = StartNode + Index;
     if (EFI_ERROR (HdaGetParameter (PciIo, Codec, Node, 0x09, &Response))) continue;
     Stats->ImmediateCommands++;
@@ -890,66 +897,173 @@ STATIC VOID ProbeHdaCodecTopology (
     }
 
     if (WidgetType == 0x04) {
+      UINT32 CandidateWidgetCaps;
+      UINT32 CandidatePinCaps;
+      UINT32 CandidateConfig;
+      UINT32 CandidatePinControl;
+      UINT32 CandidateEapd;
+      UINT32 CandidateConnectionLength;
+      UINT32 CandidateFirstConnection;
+      UINTN CandidateEvidence;
+      UINTN CandidateDefaultDevice;
+      UINTN CandidatePortConnectivity;
+      UINTN CandidateScore;
+
       Stats->PinWidgets++;
+      CandidateWidgetCaps = Response;
+      CandidatePinCaps = 0;
+      CandidateConfig = 0;
+      CandidatePinControl = 0;
+      CandidateEapd = 0;
+      CandidateConnectionLength = 0;
+      CandidateFirstConnection = 0;
+      CandidateEvidence = 0;
+      CandidateScore = 0;
 
-      if (Stats->PinNode == 0) {
-        UINT32 ConnectionLength;
+      if (!EFI_ERROR (HdaGetParameter (PciIo, Codec, Node, 0x0C, &Response))) {
+        Stats->ImmediateCommands++;
+        CandidatePinCaps = Response;
+        CandidateEvidence++;
+      }
+
+      if (!EFI_ERROR (HdaImmediateCommand (
+                        PciIo,
+                        HdaVerb (Codec, Node, 0xF1C, 0),
+                        &Response
+                        ))) {
+        Stats->ImmediateCommands++;
+        CandidateConfig = Response;
+        CandidateEvidence++;
+      }
+
+      if (!EFI_ERROR (HdaImmediateCommand (
+                        PciIo,
+                        HdaVerb (Codec, Node, 0xF07, 0),
+                        &Response
+                        ))) {
+        Stats->ImmediateCommands++;
+        CandidatePinControl = Response & 0xFF;
+        CandidateEvidence++;
+      }
+
+      if (!EFI_ERROR (HdaImmediateCommand (
+                        PciIo,
+                        HdaVerb (Codec, Node, 0xF0C, 0),
+                        &Response
+                        ))) {
+        Stats->ImmediateCommands++;
+        CandidateEapd = Response & 0xFF;
+        CandidateEvidence++;
+      }
+
+      if (!EFI_ERROR (HdaGetParameter (PciIo, Codec, Node, 0x0E, &Response))) {
+        Stats->ImmediateCommands++;
+        CandidateConnectionLength = Response;
+        CandidateEvidence++;
+      }
+
+      if ((CandidateConnectionLength & 0x7F) != 0) {
+        if (!EFI_ERROR (HdaImmediateCommand (
+                          PciIo,
+                          HdaVerb (Codec, Node, 0xF02, 0),
+                          &Response
+                          ))) {
+          Stats->ImmediateCommands++;
+          CandidateFirstConnection = Response & 0xFF;
+          CandidateEvidence++;
+        }
+      }
+
+      CandidateDefaultDevice = (CandidateConfig >> 20) & 0x0F;
+      CandidatePortConnectivity = (CandidateConfig >> 30) & 0x03;
+
+      /*
+       * Select only physically connected analog outputs.
+       * HDA default-device priority for the laptop path:
+       *   Speaker > Headphone Out > Line Out.
+       * Prefer fixed/built-in pins over jacks for equal device class.
+       */
+      if (CandidatePortConnectivity != 0x01) {
+        if (CandidateDefaultDevice == 0x01) {
+          CandidateScore = 300;
+        } else if (CandidateDefaultDevice == 0x02) {
+          CandidateScore = 200;
+        } else if (CandidateDefaultDevice == 0x00) {
+          CandidateScore = 100;
+        }
+
+        if (CandidateScore != 0) {
+          Stats->AnalogPinCandidates++;
+          if (CandidatePortConnectivity == 0x02) {
+            CandidateScore += 20;
+          } else if (CandidatePortConnectivity == 0x03) {
+            CandidateScore += 10;
+          }
+        }
+      }
+
+      if ((CandidateScore != 0) && (CandidateScore > BestPinScore)) {
+        UINT32 ConnectedCaps;
+        UINTN ConnectedWidgetType;
+
+        BestPinScore = CandidateScore;
         Stats->PinNode = Node;
-        Stats->PinWidgetCaps = Response;
+        Stats->PinWidgetCaps = CandidateWidgetCaps;
+        Stats->PinCapabilities = CandidatePinCaps;
+        Stats->PinConfigDefault = CandidateConfig;
+        Stats->PinControl = CandidatePinControl;
+        Stats->PinEapd = CandidateEapd;
+        Stats->PinConnectionListLength = CandidateConnectionLength;
+        Stats->PinFirstConnection = CandidateFirstConnection;
+        Stats->RouteEvidence = CandidateEvidence;
+        Stats->PinDefaultDevice = CandidateDefaultDevice;
+        Stats->PinPortConnectivity = CandidatePortConnectivity;
+        Stats->PinSelectionScore = CandidateScore;
 
-        if (!EFI_ERROR (HdaGetParameter (PciIo, Codec, Node, 0x0C, &Response))) {
-          Stats->ImmediateCommands++;
-          Stats->PinCapabilities = Response;
-          Stats->RouteEvidence++;
-        }
-
-        if (!EFI_ERROR (HdaImmediateCommand (
-                          PciIo,
-                          HdaVerb (Codec, Node, 0xF1C, 0),
-                          &Response
-                          ))) {
-          Stats->ImmediateCommands++;
-          Stats->PinConfigDefault = Response;
-          Stats->RouteEvidence++;
-        }
-
-        if (!EFI_ERROR (HdaImmediateCommand (
-                          PciIo,
-                          HdaVerb (Codec, Node, 0xF07, 0),
-                          &Response
-                          ))) {
-          Stats->ImmediateCommands++;
-          Stats->PinControl = Response & 0xFF;
-          Stats->RouteEvidence++;
-        }
-
-        if (!EFI_ERROR (HdaImmediateCommand (
-                          PciIo,
-                          HdaVerb (Codec, Node, 0xF0C, 0),
-                          &Response
-                          ))) {
-          Stats->ImmediateCommands++;
-          Stats->PinEapd = Response & 0xFF;
-          Stats->RouteEvidence++;
-        }
-
-        ConnectionLength = 0;
-        if (!EFI_ERROR (HdaGetParameter (PciIo, Codec, Node, 0x0E, &Response))) {
-          Stats->ImmediateCommands++;
-          ConnectionLength = Response;
-          Stats->PinConnectionListLength = Response;
-          Stats->RouteEvidence++;
-        }
-
-        if ((ConnectionLength & 0x7F) != 0) {
-          if (!EFI_ERROR (HdaImmediateCommand (
-                            PciIo,
-                            HdaVerb (Codec, Node, 0xF02, 0),
-                            &Response
-                            ))) {
+        /*
+         * If the selected pin directly names an output converter, bind the
+         * converter evidence to that route instead of keeping an unrelated
+         * first converter discovered earlier.
+         */
+        if (CandidateFirstConnection != 0) {
+          ConnectedCaps = 0;
+          if (!EFI_ERROR (HdaGetParameter (
+                           PciIo,
+                           Codec,
+                           CandidateFirstConnection,
+                           0x09,
+                           &ConnectedCaps
+                           ))) {
             Stats->ImmediateCommands++;
-            Stats->PinFirstConnection = Response;
-            Stats->RouteEvidence++;
+            ConnectedWidgetType = (ConnectedCaps >> 20) & 0x0F;
+            if (ConnectedWidgetType == 0x00) {
+              Stats->ConverterNode = CandidateFirstConnection;
+              Stats->ConverterWidgetCaps = ConnectedCaps;
+
+              if (!EFI_ERROR (HdaGetParameter (
+                               PciIo,
+                               Codec,
+                               CandidateFirstConnection,
+                               0x0A,
+                               &Response
+                               ))) {
+                Stats->ImmediateCommands++;
+                Stats->ConverterPcmCaps = Response;
+                Stats->StreamCapabilityEvidence++;
+              }
+
+              if (!EFI_ERROR (HdaGetParameter (
+                               PciIo,
+                               Codec,
+                               CandidateFirstConnection,
+                               0x0B,
+                               &Response
+                               ))) {
+                Stats->ImmediateCommands++;
+                Stats->ConverterStreamFormats = Response;
+                Stats->StreamCapabilityEvidence++;
+              }
+            }
           }
         }
       }
@@ -1636,6 +1750,10 @@ STATIC EFI_STATUS SaveDiag (
   if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_PIN_CONNECTION_LIST_LENGTH", Hda->PinConnectionListLength);
   if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_PIN_FIRST_CONNECTION", Hda->PinFirstConnection);
   if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_ROUTE_EVIDENCE", Hda->RouteEvidence);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_PIN_DEFAULT_DEVICE", Hda->PinDefaultDevice);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_PIN_PORT_CONNECTIVITY", Hda->PinPortConnectivity);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_PIN_SELECTION_SCORE", Hda->PinSelectionScore);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_ANALOG_PIN_CANDIDATES", Hda->AnalogPinCandidates);
   if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_INPUT_STREAMS", Hda->InputStreams);
   if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_OUTPUT_STREAMS", Hda->OutputStreams);
   if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_BIDIR_STREAMS", Hda->BidirStreams);
@@ -2176,6 +2294,10 @@ UefiMain (
   WriteStat ("OMNI_HDA_PIN_CONNECTION_LIST_LENGTH", Hda.PinConnectionListLength);
   WriteStat ("OMNI_HDA_PIN_FIRST_CONNECTION", Hda.PinFirstConnection);
   WriteStat ("OMNI_HDA_ROUTE_EVIDENCE", Hda.RouteEvidence);
+  WriteStat ("OMNI_HDA_PIN_DEFAULT_DEVICE", Hda.PinDefaultDevice);
+  WriteStat ("OMNI_HDA_PIN_PORT_CONNECTIVITY", Hda.PinPortConnectivity);
+  WriteStat ("OMNI_HDA_PIN_SELECTION_SCORE", Hda.PinSelectionScore);
+  WriteStat ("OMNI_HDA_ANALOG_PIN_CANDIDATES", Hda.AnalogPinCandidates);
   WriteStat ("OMNI_HDA_INPUT_STREAMS", Hda.InputStreams);
   WriteStat ("OMNI_HDA_OUTPUT_STREAMS", Hda.OutputStreams);
   WriteStat ("OMNI_HDA_BIDIR_STREAMS", Hda.BidirStreams);
