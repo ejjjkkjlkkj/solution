@@ -9,6 +9,13 @@ PCM_MIN_RMS = 48
 PCM_MAX_ABS_DC = 512
 
 
+def _mean_toward_zero(values: list[int]) -> int:
+    total = sum(values)
+    if total >= 0:
+        return total // len(values)
+    return -((-total) // len(values))
+
+
 @dataclass(frozen=True, slots=True)
 class PcmQualityReport:
     sample_rate: int
@@ -17,6 +24,8 @@ class PcmQualityReport:
     peak: int
     rms: int
     dc_offset: int
+    channel_rms: tuple[int, ...]
+    channel_dc_offsets: tuple[int, ...]
     clipped_samples: int
     violations: tuple[str, ...]
 
@@ -32,6 +41,8 @@ class PcmQualityReport:
             "peak": self.peak,
             "rms": self.rms,
             "dc_offset": self.dc_offset,
+            "channel_rms": list(self.channel_rms),
+            "channel_dc_offsets": list(self.channel_dc_offsets),
             "clipped_samples": self.clipped_samples,
             "violations": list(self.violations),
             "status": "VOICE_PCM_CLEAN" if self.clean else "VOICE_PCM_REJECTED",
@@ -65,20 +76,29 @@ def inspect_pcm16le(
         int.from_bytes(data[i : i + 2], "little", signed=True)
         for i in range(0, len(data), 2)
     ]
-    count = len(samples)
-    frames = count // channels
+    frames = len(samples) // channels
     peak = max(abs(value) for value in samples)
     clipped = sum(value in (-32768, 32767) for value in samples)
-    dc_offset = round(sum(samples) / count)
-    rms = isqrt(sum(value * value for value in samples) // count)
+
+    channel_values = tuple(samples[index::channels] for index in range(channels))
+    channel_dc = tuple(_mean_toward_zero(values) for values in channel_values)
+    channel_rms = tuple(
+        isqrt(sum(value * value for value in values) // len(values))
+        for values in channel_values
+    )
+
+    dc_offset = max(channel_dc, key=abs)
+    rms = min(channel_rms)
 
     violations: list[str] = []
     if clipped:
         violations.append("clipping")
-    if abs(dc_offset) > PCM_MAX_ABS_DC:
-        violations.append("dc-offset")
-    if rms < PCM_MIN_RMS:
-        violations.append("silence-or-near-silence")
+    for index, value in enumerate(channel_dc):
+        if abs(value) > PCM_MAX_ABS_DC:
+            violations.append(f"dc-offset-channel-{index}")
+    for index, value in enumerate(channel_rms):
+        if value < PCM_MIN_RMS:
+            violations.append(f"silence-or-near-silence-channel-{index}")
 
     return PcmQualityReport(
         sample_rate=sample_rate,
@@ -87,6 +107,8 @@ def inspect_pcm16le(
         peak=peak,
         rms=rms,
         dc_offset=dc_offset,
+        channel_rms=channel_rms,
+        channel_dc_offsets=channel_dc,
         clipped_samples=clipped,
         violations=tuple(violations),
     )
