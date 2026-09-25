@@ -12,6 +12,7 @@
 #define OMNI_COM1_BASE     0x3F8
 #define OMNI_EVIDENCE_FILE  L"\\OMNI-EVIDENCE.TXT"
 #define OMNI_DIAG_FILE      L"\\OMNI-DIAG.TXT"
+#define OMNI_TRACE_FILE     L"\\OMNI-TRACE.TXT"
 #define OMNI_CHALLENGE_FILE L"\\OMNI-CHALLENGE.TXT"
 #define OMNI_CHALLENGE_HEX_LEN 64
 #define OMNI_UUID_TEXT_LEN      36
@@ -402,6 +403,89 @@ STATIC EFI_STATUS LoadPlatformUuid (
 
   FormatGuidAscii (&Type1->Uuid, PlatformUuid);
   return EFI_SUCCESS;
+}
+
+
+STATIC EFI_STATUS SaveTraceStage (
+  EFI_HANDLE       ImageHandle,
+  EFI_SYSTEM_TABLE *SystemTable,
+  CONST CHAR8      *Stage
+  )
+{
+  EFI_STATUS Status;
+  EFI_LOADED_IMAGE_PROTOCOL *LoadedImage;
+  EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *FileSystem;
+  EFI_FILE_PROTOCOL *Root;
+  EFI_FILE_PROTOCOL *File;
+
+  if ((SystemTable == NULL) || (SystemTable->BootServices == NULL) || (Stage == NULL)) {
+    return EFI_INVALID_PARAMETER;
+  }
+
+  LoadedImage = NULL;
+  Status = SystemTable->BootServices->HandleProtocol (
+                                      ImageHandle,
+                                      &gEfiLoadedImageProtocolGuid,
+                                      (VOID **)&LoadedImage
+                                      );
+  if (EFI_ERROR (Status) || (LoadedImage == NULL)) {
+    return EFI_NOT_FOUND;
+  }
+
+  FileSystem = NULL;
+  Status = SystemTable->BootServices->HandleProtocol (
+                                      LoadedImage->DeviceHandle,
+                                      &gEfiSimpleFileSystemProtocolGuid,
+                                      (VOID **)&FileSystem
+                                      );
+  if (EFI_ERROR (Status) || (FileSystem == NULL)) {
+    return EFI_NOT_FOUND;
+  }
+
+  Root = NULL;
+  Status = FileSystem->OpenVolume (FileSystem, &Root);
+  if (EFI_ERROR (Status) || (Root == NULL)) {
+    return Status;
+  }
+
+  File = NULL;
+  Status = Root->Open (
+                   Root,
+                   &File,
+                   OMNI_TRACE_FILE,
+                   EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE,
+                   0
+                   );
+  if (!EFI_ERROR (Status) && (File != NULL)) {
+    Status = File->Delete (File);
+    File = NULL;
+    if (EFI_ERROR (Status)) {
+      Root->Close (Root);
+      return Status;
+    }
+  }
+
+  Status = Root->Open (
+                   Root,
+                   &File,
+                   OMNI_TRACE_FILE,
+                   EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE,
+                   0
+                   );
+  if (EFI_ERROR (Status) || (File == NULL)) {
+    Root->Close (Root);
+    return Status;
+  }
+
+  Status = FileWriteAscii (File, "OMNI_TRACE_V1\n");
+  if (!EFI_ERROR (Status)) Status = FileWriteAscii (File, "STAGE=");
+  if (!EFI_ERROR (Status)) Status = FileWriteAscii (File, Stage);
+  if (!EFI_ERROR (Status)) Status = FileWriteAscii (File, "\n");
+  if (!EFI_ERROR (Status)) Status = File->Flush (File);
+
+  File->Close (File);
+  Root->Close (Root);
+  return Status;
 }
 
 STATIC EFI_STATUS ProbeGop (
@@ -1109,25 +1193,7 @@ UefiMain (
 
   SerialInit ();
   WriteText ("OMNI_BOOT_OK\n");
-
-  GopStatus = ProbeGop (SystemTable, &Gop);
-  WriteStat ("OMNI_GOP_HANDLES", Gop.Handles);
-  WriteStat ("OMNI_GOP_MODES", Gop.Modes);
-  WriteStat ("OMNI_GOP_QUERY_PASS", Gop.QueryPass);
-  WriteStat ("OMNI_GOP_SET_PASS", Gop.SetPass);
-  WriteStat ("OMNI_GOP_BLT_PASS", Gop.BltPass);
-  WriteStat ("OMNI_GOP_WIDTH", Gop.Width);
-  WriteStat ("OMNI_GOP_HEIGHT", Gop.Height);
-  WriteText (EFI_ERROR (GopStatus) ? "OMNI_GOP_PROBE_FAIL\n" : "OMNI_GOP_PROBE_PASS\n");
-
-  HdaStatus = ProbeHda (SystemTable, &Hda);
-  WriteStat ("OMNI_HDA_PCI_HANDLES", Hda.PciHandles);
-  WriteStat ("OMNI_HDA_CONTROLLERS", Hda.Controllers);
-  WriteStat ("OMNI_HDA_MMIO_READS", Hda.MmioReads);
-  WriteStat ("OMNI_HDA_CODEC_BITMAP", Hda.CodecBitmap);
-  WriteStat ("OMNI_HDA_VENDOR_ID", Hda.VendorId);
-  WriteStat ("OMNI_HDA_DEVICE_ID", Hda.DeviceId);
-  WriteText (EFI_ERROR (HdaStatus) ? "OMNI_HDA_PROBE_MISS\n" : "OMNI_HDA_PROBE_PASS\n");
+  SaveTraceStage (ImageHandle, SystemTable, "BOOT_START");
 
   ChallengeStatus = LoadChallenge (ImageHandle, SystemTable, Challenge);
   if (EFI_ERROR (ChallengeStatus)) {
@@ -1187,6 +1253,31 @@ UefiMain (
 
   WriteText (Passed ? "OMNI_UEFI_PASS\n" : "OMNI_UEFI_FAIL\n");
 
+  SaveTraceStage (ImageHandle, SystemTable, "CORE_EVIDENCE_SAVED");
+
+  SaveTraceStage (ImageHandle, SystemTable, "BEFORE_GOP");
+  GopStatus = ProbeGop (SystemTable, &Gop);
+  WriteStat ("OMNI_GOP_HANDLES", Gop.Handles);
+  WriteStat ("OMNI_GOP_MODES", Gop.Modes);
+  WriteStat ("OMNI_GOP_QUERY_PASS", Gop.QueryPass);
+  WriteStat ("OMNI_GOP_SET_PASS", Gop.SetPass);
+  WriteStat ("OMNI_GOP_BLT_PASS", Gop.BltPass);
+  WriteStat ("OMNI_GOP_WIDTH", Gop.Width);
+  WriteStat ("OMNI_GOP_HEIGHT", Gop.Height);
+  WriteText (EFI_ERROR (GopStatus) ? "OMNI_GOP_PROBE_FAIL\n" : "OMNI_GOP_PROBE_PASS\n");
+  SaveTraceStage (ImageHandle, SystemTable, "AFTER_GOP");
+
+  SaveTraceStage (ImageHandle, SystemTable, "BEFORE_HDA");
+  HdaStatus = ProbeHda (SystemTable, &Hda);
+  WriteStat ("OMNI_HDA_PCI_HANDLES", Hda.PciHandles);
+  WriteStat ("OMNI_HDA_CONTROLLERS", Hda.Controllers);
+  WriteStat ("OMNI_HDA_MMIO_READS", Hda.MmioReads);
+  WriteStat ("OMNI_HDA_CODEC_BITMAP", Hda.CodecBitmap);
+  WriteStat ("OMNI_HDA_VENDOR_ID", Hda.VendorId);
+  WriteStat ("OMNI_HDA_DEVICE_ID", Hda.DeviceId);
+  WriteText (EFI_ERROR (HdaStatus) ? "OMNI_HDA_PROBE_MISS\n" : "OMNI_HDA_PROBE_PASS\n");
+  SaveTraceStage (ImageHandle, SystemTable, "AFTER_HDA");
+
   DiagStatus = SaveDiag (
                  ImageHandle,
                  SystemTable,
@@ -1197,6 +1288,11 @@ UefiMain (
                  HdaStatus
                  );
   WriteText (EFI_ERROR (DiagStatus) ? "OMNI_DIAG_FAIL\n" : "OMNI_DIAG_PASS\n");
+  SaveTraceStage (
+    ImageHandle,
+    SystemTable,
+    EFI_ERROR (DiagStatus) ? "DIAG_WRITE_FAIL" : "COMPLETE"
+    );
 
   ShowPhysicalScreen (SystemTable, &Gop, &Hda, Passed);
   if ((SystemTable != NULL) && (SystemTable->BootServices != NULL)) {
