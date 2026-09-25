@@ -64,7 +64,7 @@ class CliExitStatusTests(unittest.TestCase):
         self.assertEqual(rc, 1)
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["status"], "VOICE_PCM_REJECTED")
-        self.assertIn("silence-or-near-silence", payload["violations"])
+        self.assertIn("silence-or-near-silence-channel-0", payload["violations"])
 
 
 if __name__ == "__main__":
