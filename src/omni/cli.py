@@ -4,7 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
-from . import ceiling, firmware, ifr
+from . import ceiling, firmware, ifr, voice_frontend, voice_pipeline, voice_quality
 
 
 def _load_manifest(path: Path, label: str) -> dict[str, str]:
@@ -27,6 +27,18 @@ def main() -> int:
     hii = sub.add_parser("ifr-inspect")
     hii.add_argument("package_list")
 
+    speech = sub.add_parser("voice-normalize")
+    speech.add_argument("text")
+    speech.add_argument("--lang", choices=("fr", "en"), default="fr")
+
+    compile_voice = sub.add_parser("voice-compile")
+    compile_voice.add_argument("text")
+    compile_voice.add_argument("--lang", choices=("fr", "en"), default="fr")
+
+    pcm_check = sub.add_parser("voice-pcm-check")
+    pcm_check.add_argument("pcm", type=Path)
+    pcm_check.add_argument("--channels", type=int, choices=(1, 2), default=1)
+
     sw = sub.add_parser("software-ceiling")
     sw.add_argument("manifest", type=Path)
 
@@ -44,6 +56,27 @@ def main() -> int:
     if args.command == "ifr-inspect":
         print(json.dumps(ifr.inspect_file(args.package_list), indent=2))
         return 0
+    if args.command == "voice-normalize":
+        tokens = voice_frontend.normalize_for_speech(args.text, args.lang)
+        print(
+            json.dumps(
+                [{"kind": token.kind.value, "text": token.text} for token in tokens],
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+    if args.command == "voice-compile":
+        stream = voice_pipeline.compile_speech_stream(args.text, args.lang)
+        print(json.dumps({"version": voice_pipeline.FRONTEND_STREAM_VERSION, "bytes": list(stream)}, indent=2))
+        return 0
+    if args.command == "voice-pcm-check":
+        report = voice_quality.inspect_pcm16le(
+            args.pcm.read_bytes(),
+            channels=args.channels,
+        )
+        print(json.dumps(report.to_dict(), indent=2, sort_keys=True))
+        return 0 if report.clean else 1
     if args.command == "software-ceiling":
         result = ceiling.evaluate(_load_manifest(args.manifest, "software ceiling"))
         print(json.dumps(result, indent=2, sort_keys=True))
