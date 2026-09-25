@@ -1,5 +1,7 @@
 #include <Uefi.h>
 #include <Protocol/HiiDatabase.h>
+#include <Protocol/GraphicsOutput.h>
+#include <Protocol/PciIo.h>
 #include <Protocol/LoadedImage.h>
 #include <Protocol/SimpleFileSystem.h>
 #include <Protocol/Smbios.h>
@@ -9,6 +11,7 @@
 #define OMNI_DEBUGCON_PORT 0x402
 #define OMNI_COM1_BASE     0x3F8
 #define OMNI_EVIDENCE_FILE  L"\\OMNI-EVIDENCE.TXT"
+#define OMNI_DIAG_FILE      L"\\OMNI-DIAG.TXT"
 #define OMNI_CHALLENGE_FILE L"\\OMNI-CHALLENGE.TXT"
 #define OMNI_CHALLENGE_HEX_LEN 64
 #define OMNI_UUID_TEXT_LEN      36
@@ -21,6 +24,34 @@ typedef struct {
   UINTN Passwords;
   UINTN InvalidPackages;
 } OMNI_HII_STATS;
+
+typedef struct {
+  UINTN Handles;
+  UINTN Modes;
+  UINTN QueryPass;
+  UINTN SetPass;
+  UINTN BltPass;
+  UINTN Width;
+  UINTN Height;
+  UINTN PixelFormat;
+} OMNI_GOP_STATS;
+
+typedef struct {
+  UINTN PciHandles;
+  UINTN Controllers;
+  UINTN MmioReads;
+  UINTN CodecBitmap;
+  UINTN Segment;
+  UINTN Bus;
+  UINTN Device;
+  UINTN Function;
+  UINTN VendorId;
+  UINTN DeviceId;
+  UINTN Gcap;
+  UINTN Gctl;
+  UINTN Vmaj;
+  UINTN Vmin;
+} OMNI_HDA_STATS;
 
 STATIC VOID SerialInit (VOID) {
   IoWrite8 (OMNI_COM1_BASE + 1, 0x00);
@@ -371,6 +402,346 @@ STATIC EFI_STATUS LoadPlatformUuid (
 
   FormatGuidAscii (&Type1->Uuid, PlatformUuid);
   return EFI_SUCCESS;
+}
+
+STATIC EFI_STATUS ProbeGop (
+  EFI_SYSTEM_TABLE *SystemTable,
+  OUT OMNI_GOP_STATS *Stats
+  )
+{
+  EFI_STATUS Status;
+  EFI_STATUS FirstError;
+  EFI_HANDLE *Handles;
+  UINTN HandleCount;
+  UINTN Index;
+
+  if ((SystemTable == NULL) || (SystemTable->BootServices == NULL) || (Stats == NULL)) {
+    return EFI_INVALID_PARAMETER;
+  }
+
+  Handles = NULL;
+  HandleCount = 0;
+  FirstError = EFI_NOT_FOUND;
+
+  Status = SystemTable->BootServices->LocateHandleBuffer (
+                                      ByProtocol,
+                                      &gEfiGraphicsOutputProtocolGuid,
+                                      NULL,
+                                      &HandleCount,
+                                      &Handles
+                                      );
+  if (EFI_ERROR (Status) || (HandleCount == 0) || (Handles == NULL)) {
+    return Status;
+  }
+
+  for (Index = 0; Index < HandleCount; ++Index) {
+    EFI_GRAPHICS_OUTPUT_PROTOCOL *Gop;
+    UINT32 ModeIndex;
+
+    Gop = NULL;
+    Status = SystemTable->BootServices->HandleProtocol (
+                                        Handles[Index],
+                                        &gEfiGraphicsOutputProtocolGuid,
+                                        (VOID **)&Gop
+                                        );
+    if (EFI_ERROR (Status) || (Gop == NULL)) {
+      if (FirstError == EFI_NOT_FOUND) {
+        FirstError = Status;
+      }
+      continue;
+    }
+
+    Stats->Handles++;
+    FirstError = EFI_SUCCESS;
+
+    if ((Gop->Mode != NULL) && (Gop->Mode->Info != NULL)) {
+      if (Stats->Width == 0) {
+        Stats->Width = Gop->Mode->Info->HorizontalResolution;
+        Stats->Height = Gop->Mode->Info->VerticalResolution;
+        Stats->PixelFormat = Gop->Mode->Info->PixelFormat;
+      }
+
+      Status = Gop->SetMode (Gop, Gop->Mode->Mode);
+      if (!EFI_ERROR (Status)) {
+        EFI_GRAPHICS_OUTPUT_BLT_PIXEL Pixel;
+
+        Stats->SetPass++;
+        Pixel.Blue = 0x30;
+        Pixel.Green = 0x20;
+        Pixel.Red = 0x10;
+        Pixel.Reserved = 0;
+
+        if ((Gop->Mode->Info != NULL) &&
+            (Gop->Mode->Info->HorizontalResolution != 0) &&
+            (Gop->Mode->Info->VerticalResolution != 0)) {
+          Status = Gop->Blt (
+                          Gop,
+                          &Pixel,
+                          EfiBltVideoFill,
+                          0,
+                          0,
+                          0,
+                          0,
+                          Gop->Mode->Info->HorizontalResolution,
+                          Gop->Mode->Info->VerticalResolution,
+                          0
+                          );
+          if (!EFI_ERROR (Status)) {
+            Stats->BltPass++;
+          }
+        }
+      }
+    }
+
+    if ((Gop->Mode == NULL) || (Gop->Mode->MaxMode == 0)) {
+      continue;
+    }
+
+    for (ModeIndex = 0; ModeIndex < Gop->Mode->MaxMode; ++ModeIndex) {
+      EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *Info;
+      UINTN InfoSize;
+
+      Info = NULL;
+      InfoSize = 0;
+      Status = Gop->QueryMode (Gop, ModeIndex, &InfoSize, &Info);
+      if (!EFI_ERROR (Status) && (Info != NULL)) {
+        Stats->QueryPass++;
+        Stats->Modes++;
+      }
+      if (Info != NULL) {
+        SystemTable->BootServices->FreePool (Info);
+      }
+    }
+  }
+
+  SystemTable->BootServices->FreePool (Handles);
+  return FirstError;
+}
+
+STATIC EFI_STATUS ProbeHda (
+  EFI_SYSTEM_TABLE *SystemTable,
+  OUT OMNI_HDA_STATS *Stats
+  )
+{
+  EFI_STATUS Status;
+  EFI_HANDLE *Handles;
+  UINTN HandleCount;
+  UINTN Index;
+
+  if ((SystemTable == NULL) || (SystemTable->BootServices == NULL) || (Stats == NULL)) {
+    return EFI_INVALID_PARAMETER;
+  }
+
+  Handles = NULL;
+  HandleCount = 0;
+  Status = SystemTable->BootServices->LocateHandleBuffer (
+                                      ByProtocol,
+                                      &gEfiPciIoProtocolGuid,
+                                      NULL,
+                                      &HandleCount,
+                                      &Handles
+                                      );
+  if (EFI_ERROR (Status) || (Handles == NULL)) {
+    return Status;
+  }
+
+  for (Index = 0; Index < HandleCount; ++Index) {
+    EFI_PCI_IO_PROTOCOL *PciIo;
+    UINT16 VendorId;
+    UINT16 DeviceId;
+    UINT8 SubClass;
+    UINT8 BaseClass;
+
+    PciIo = NULL;
+    Status = SystemTable->BootServices->HandleProtocol (
+                                        Handles[Index],
+                                        &gEfiPciIoProtocolGuid,
+                                        (VOID **)&PciIo
+                                        );
+    if (EFI_ERROR (Status) || (PciIo == NULL)) {
+      continue;
+    }
+
+    Stats->PciHandles++;
+    VendorId = 0xFFFF;
+    DeviceId = 0xFFFF;
+    SubClass = 0;
+    BaseClass = 0;
+
+    Status = PciIo->Pci.Read (PciIo, EfiPciIoWidthUint16, 0x00, 1, &VendorId);
+    if (EFI_ERROR (Status) || (VendorId == 0xFFFF)) continue;
+    Status = PciIo->Pci.Read (PciIo, EfiPciIoWidthUint16, 0x02, 1, &DeviceId);
+    if (EFI_ERROR (Status)) continue;
+    Status = PciIo->Pci.Read (PciIo, EfiPciIoWidthUint8, 0x0A, 1, &SubClass);
+    if (EFI_ERROR (Status)) continue;
+    Status = PciIo->Pci.Read (PciIo, EfiPciIoWidthUint8, 0x0B, 1, &BaseClass);
+    if (EFI_ERROR (Status)) continue;
+
+    if ((BaseClass == 0x04) && (SubClass == 0x03)) {
+      UINTN Segment;
+      UINTN Bus;
+      UINTN Device;
+      UINTN Function;
+      UINT16 Gcap;
+      UINT16 StateSts;
+      UINT32 Gctl;
+      UINT8 Vmin;
+      UINT8 Vmaj;
+
+      Stats->Controllers++;
+      if (Stats->Controllers != 1) continue;
+
+      Stats->VendorId = VendorId;
+      Stats->DeviceId = DeviceId;
+      Segment = 0;
+      Bus = 0;
+      Device = 0;
+      Function = 0;
+      if (!EFI_ERROR (PciIo->GetLocation (PciIo, &Segment, &Bus, &Device, &Function))) {
+        Stats->Segment = Segment;
+        Stats->Bus = Bus;
+        Stats->Device = Device;
+        Stats->Function = Function;
+      }
+
+      Gcap = 0;
+      Vmin = 0;
+      Vmaj = 0;
+      Gctl = 0;
+      StateSts = 0;
+      if (!EFI_ERROR (PciIo->Mem.Read (PciIo, EfiPciIoWidthUint16, 0, 0x00, 1, &Gcap))) {
+        Stats->Gcap = Gcap; Stats->MmioReads++;
+      }
+      if (!EFI_ERROR (PciIo->Mem.Read (PciIo, EfiPciIoWidthUint8, 0, 0x02, 1, &Vmin))) {
+        Stats->Vmin = Vmin; Stats->MmioReads++;
+      }
+      if (!EFI_ERROR (PciIo->Mem.Read (PciIo, EfiPciIoWidthUint8, 0, 0x03, 1, &Vmaj))) {
+        Stats->Vmaj = Vmaj; Stats->MmioReads++;
+      }
+      if (!EFI_ERROR (PciIo->Mem.Read (PciIo, EfiPciIoWidthUint32, 0, 0x08, 1, &Gctl))) {
+        Stats->Gctl = Gctl; Stats->MmioReads++;
+      }
+      if (!EFI_ERROR (PciIo->Mem.Read (PciIo, EfiPciIoWidthUint16, 0, 0x0E, 1, &StateSts))) {
+        Stats->CodecBitmap = StateSts & 0x7FFF; Stats->MmioReads++;
+      }
+    }
+  }
+
+  SystemTable->BootServices->FreePool (Handles);
+  return (Stats->Controllers != 0) ? EFI_SUCCESS : EFI_NOT_FOUND;
+}
+
+STATIC EFI_STATUS SaveDiag (
+  EFI_HANDLE           ImageHandle,
+  EFI_SYSTEM_TABLE     *SystemTable,
+  CONST CHAR8          *Challenge,
+  CONST OMNI_GOP_STATS *Gop,
+  EFI_STATUS           GopStatus,
+  CONST OMNI_HDA_STATS *Hda,
+  EFI_STATUS           HdaStatus
+  )
+{
+  EFI_STATUS Status;
+  EFI_LOADED_IMAGE_PROTOCOL *LoadedImage;
+  EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *FileSystem;
+  EFI_FILE_PROTOCOL *Root;
+  EFI_FILE_PROTOCOL *File;
+
+  if ((SystemTable == NULL) || (SystemTable->BootServices == NULL) ||
+      (Challenge == NULL) || (Gop == NULL) || (Hda == NULL)) {
+    return EFI_INVALID_PARAMETER;
+  }
+
+  LoadedImage = NULL;
+  Status = SystemTable->BootServices->HandleProtocol (
+                                      ImageHandle,
+                                      &gEfiLoadedImageProtocolGuid,
+                                      (VOID **)&LoadedImage
+                                      );
+  if (EFI_ERROR (Status) || (LoadedImage == NULL)) return EFI_NOT_FOUND;
+
+  FileSystem = NULL;
+  Status = SystemTable->BootServices->HandleProtocol (
+                                      LoadedImage->DeviceHandle,
+                                      &gEfiSimpleFileSystemProtocolGuid,
+                                      (VOID **)&FileSystem
+                                      );
+  if (EFI_ERROR (Status) || (FileSystem == NULL)) return EFI_NOT_FOUND;
+
+  Root = NULL;
+  Status = FileSystem->OpenVolume (FileSystem, &Root);
+  if (EFI_ERROR (Status) || (Root == NULL)) return Status;
+
+  File = NULL;
+  Status = Root->Open (Root, &File, OMNI_DIAG_FILE, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0);
+  if (!EFI_ERROR (Status) && (File != NULL)) {
+    Status = File->Delete (File);
+    File = NULL;
+    if (EFI_ERROR (Status)) { Root->Close (Root); return Status; }
+  }
+
+  Status = Root->Open (
+                   Root,
+                   &File,
+                   OMNI_DIAG_FILE,
+                   EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE,
+                   0
+                   );
+  if (EFI_ERROR (Status) || (File == NULL)) { Root->Close (Root); return Status; }
+
+  Status = FileWriteAscii (File, "OMNI_GOP_DIAG_V1\n");
+  if (!EFI_ERROR (Status)) Status = FileWriteAscii (File, "OMNI_CHALLENGE=");
+  if (!EFI_ERROR (Status)) Status = FileWriteAscii (File, Challenge);
+  if (!EFI_ERROR (Status)) Status = FileWriteAscii (File, "\n");
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_GOP_STATUS", (UINTN)GopStatus);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_GOP_HANDLES", Gop->Handles);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_GOP_MODES", Gop->Modes);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_GOP_QUERY_PASS", Gop->QueryPass);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_GOP_SET_PASS", Gop->SetPass);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_GOP_BLT_PASS", Gop->BltPass);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_GOP_WIDTH", Gop->Width);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_GOP_HEIGHT", Gop->Height);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_GOP_PIXEL_FORMAT", Gop->PixelFormat);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_STATUS", (UINTN)HdaStatus);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_PCI_HANDLES", Hda->PciHandles);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_CONTROLLERS", Hda->Controllers);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_MMIO_READS", Hda->MmioReads);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_CODEC_BITMAP", Hda->CodecBitmap);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_SEGMENT", Hda->Segment);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_BUS", Hda->Bus);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_DEVICE", Hda->Device);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_FUNCTION", Hda->Function);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_VENDOR_ID", Hda->VendorId);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_DEVICE_ID", Hda->DeviceId);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_GCAP", Hda->Gcap);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_GCTL", Hda->Gctl);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_VMAJ", Hda->Vmaj);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_VMIN", Hda->Vmin);
+  if (!EFI_ERROR (Status)) Status = FileWriteAscii (File, "OMNI_DIAG_PASS\n");
+  if (!EFI_ERROR (Status)) Status = File->Flush (File);
+
+  File->Close (File);
+  Root->Close (Root);
+  return Status;
+}
+
+STATIC VOID ShowPhysicalScreen (
+  EFI_SYSTEM_TABLE     *SystemTable,
+  CONST OMNI_GOP_STATS *Gop,
+  CONST OMNI_HDA_STATS *Hda,
+  BOOLEAN              Passed
+  )
+{
+  if ((SystemTable == NULL) || (SystemTable->ConOut == NULL)) return;
+
+  SystemTable->ConOut->SetAttribute (SystemTable->ConOut, EFI_TEXT_ATTR (EFI_LIGHTGRAY, EFI_BLACK));
+  SystemTable->ConOut->SetCursorPosition (SystemTable->ConOut, 0, 0);
+  SystemTable->ConOut->OutputString (SystemTable->ConOut, L"OMNI UEFI PHYSICAL PROBE\r\n");
+  SystemTable->ConOut->OutputString (SystemTable->ConOut, Passed ? L"CORE EVIDENCE: PASS\r\n" : L"CORE EVIDENCE: FAIL\r\n");
+  SystemTable->ConOut->OutputString (SystemTable->ConOut, (Gop->BltPass != 0) ? L"GOP BLT: PASS\r\n" : L"GOP BLT: NOT PROVEN\r\n");
+  SystemTable->ConOut->OutputString (SystemTable->ConOut, (Hda->Controllers != 0) ? L"HDA CONTROLLER: FOUND\r\n" : L"HDA CONTROLLER: NOT FOUND\r\n");
+  SystemTable->ConOut->OutputString (SystemTable->ConOut, L"Diagnostic saved to OMNI-DIAG.TXT\r\n");
+  SystemTable->ConOut->OutputString (SystemTable->ConOut, L"Returning to firmware in 12 seconds...\r\n");
 }
 
 STATIC EFI_STATUS SaveEvidence (
@@ -725,14 +1096,38 @@ UefiMain (
   EFI_STATUS ChallengeStatus;
   EFI_STATUS PlatformStatus;
   EFI_STATUS EvidenceStatus;
+  EFI_STATUS GopStatus;
+  EFI_STATUS HdaStatus;
+  EFI_STATUS DiagStatus;
   BOOLEAN HiiPassed;
   BOOLEAN Passed;
   CHAR8 Challenge[OMNI_CHALLENGE_HEX_LEN + 1] = {0};
   CHAR8 PlatformUuid[OMNI_UUID_TEXT_LEN + 1] = {0};
   OMNI_HII_STATS Stats = {0};
+  OMNI_GOP_STATS Gop = {0};
+  OMNI_HDA_STATS Hda = {0};
 
   SerialInit ();
   WriteText ("OMNI_BOOT_OK\n");
+
+  GopStatus = ProbeGop (SystemTable, &Gop);
+  WriteStat ("OMNI_GOP_HANDLES", Gop.Handles);
+  WriteStat ("OMNI_GOP_MODES", Gop.Modes);
+  WriteStat ("OMNI_GOP_QUERY_PASS", Gop.QueryPass);
+  WriteStat ("OMNI_GOP_SET_PASS", Gop.SetPass);
+  WriteStat ("OMNI_GOP_BLT_PASS", Gop.BltPass);
+  WriteStat ("OMNI_GOP_WIDTH", Gop.Width);
+  WriteStat ("OMNI_GOP_HEIGHT", Gop.Height);
+  WriteText (EFI_ERROR (GopStatus) ? "OMNI_GOP_PROBE_FAIL\n" : "OMNI_GOP_PROBE_PASS\n");
+
+  HdaStatus = ProbeHda (SystemTable, &Hda);
+  WriteStat ("OMNI_HDA_PCI_HANDLES", Hda.PciHandles);
+  WriteStat ("OMNI_HDA_CONTROLLERS", Hda.Controllers);
+  WriteStat ("OMNI_HDA_MMIO_READS", Hda.MmioReads);
+  WriteStat ("OMNI_HDA_CODEC_BITMAP", Hda.CodecBitmap);
+  WriteStat ("OMNI_HDA_VENDOR_ID", Hda.VendorId);
+  WriteStat ("OMNI_HDA_DEVICE_ID", Hda.DeviceId);
+  WriteText (EFI_ERROR (HdaStatus) ? "OMNI_HDA_PROBE_MISS\n" : "OMNI_HDA_PROBE_PASS\n");
 
   ChallengeStatus = LoadChallenge (ImageHandle, SystemTable, Challenge);
   if (EFI_ERROR (ChallengeStatus)) {
@@ -792,14 +1187,22 @@ UefiMain (
 
   WriteText (Passed ? "OMNI_UEFI_PASS\n" : "OMNI_UEFI_FAIL\n");
 
-  if ((SystemTable != NULL) && (SystemTable->RuntimeServices != NULL)) {
-    SystemTable->RuntimeServices->ResetSystem (
-      EfiResetShutdown,
-      Passed ? EFI_SUCCESS : EFI_DEVICE_ERROR,
-      0,
-      NULL
-      );
+  DiagStatus = SaveDiag (
+                 ImageHandle,
+                 SystemTable,
+                 EFI_ERROR (ChallengeStatus) ? "INVALID" : Challenge,
+                 &Gop,
+                 GopStatus,
+                 &Hda,
+                 HdaStatus
+                 );
+  WriteText (EFI_ERROR (DiagStatus) ? "OMNI_DIAG_FAIL\n" : "OMNI_DIAG_PASS\n");
+
+  ShowPhysicalScreen (SystemTable, &Gop, &Hda, Passed);
+  if ((SystemTable != NULL) && (SystemTable->BootServices != NULL)) {
+    SystemTable->BootServices->Stall (12000000);
   }
 
+  WriteText ("OMNI_RETURN_TO_FIRMWARE\n");
   return Passed ? EFI_SUCCESS : EFI_DEVICE_ERROR;
 }
