@@ -42,10 +42,12 @@ class CliExitStatusTests(unittest.TestCase):
         )
         self.assertEqual(payload[2], {"kind": "clause", "text": "question"})
 
-
     def test_voice_compile_cli_outputs_versioned_stream(self):
         stdout = io.StringIO()
-        with patch("sys.argv", ["omni", "voice-compile", "USB 8192 ?", "--lang", "fr"]):
+        with patch(
+            "sys.argv",
+            ["omni", "voice-compile", "USB 8192 ?", "--lang", "fr"],
+        ):
             with redirect_stdout(stdout):
                 rc = cli.main()
         self.assertEqual(rc, 0)
@@ -56,7 +58,7 @@ class CliExitStatusTests(unittest.TestCase):
     def test_voice_pcm_check_rejects_silence(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "silence.pcm"
-            path.write_bytes(b"\\x00\\x00" * 256)
+            path.write_bytes(bytes(512))
             stdout = io.StringIO()
             with patch("sys.argv", ["omni", "voice-pcm-check", str(path)]):
                 with redirect_stdout(stdout):
