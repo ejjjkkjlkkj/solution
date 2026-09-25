@@ -4,7 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
-from . import ceiling, firmware, ifr, voice_frontend
+from . import ceiling, firmware, ifr, voice_frontend, voice_pipeline, voice_quality
 
 
 def _load_manifest(path: Path, label: str) -> dict[str, str]:
