@@ -68,6 +68,37 @@ typedef struct {
   UINTN WidgetCount;
   UINTN OutputConverters;
   UINTN PinWidgets;
+
+  /* Read-only codec route evidence. */
+  UINTN ConverterNode;
+  UINTN ConverterWidgetCaps;
+  UINTN ConverterPcmCaps;
+  UINTN ConverterStreamFormats;
+  UINTN PinNode;
+  UINTN PinWidgetCaps;
+  UINTN PinCapabilities;
+  UINTN PinConfigDefault;
+  UINTN PinControl;
+  UINTN PinEapd;
+  UINTN PinConnectionListLength;
+  UINTN PinFirstConnection;
+  UINTN RouteEvidence;
+
+  /* Read-only HDA DMA/stream descriptor capability evidence. */
+  UINTN InputStreams;
+  UINTN OutputStreams;
+  UINTN BidirStreams;
+  UINTN Dma64Bit;
+  UINTN FirstOutputStreamOffset;
+  UINTN FirstOutputStreamCtl;
+  UINTN FirstOutputStreamStatus;
+  UINTN FirstOutputStreamLpib;
+  UINTN FirstOutputStreamCbl;
+  UINTN FirstOutputStreamLvi;
+  UINTN FirstOutputStreamFormat;
+  UINTN FirstOutputStreamBdpl;
+  UINTN FirstOutputStreamBdpu;
+  UINTN StreamCapabilityEvidence;
 } OMNI_HDA_STATS;
 
 STATIC UINTN AppendAsciiBounded (
@@ -826,8 +857,93 @@ STATIC VOID ProbeHdaCodecTopology (
     if (EFI_ERROR (HdaGetParameter (PciIo, Codec, Node, 0x09, &Response))) continue;
     Stats->ImmediateCommands++;
     WidgetType = (Response >> 20) & 0x0F;
-    if (WidgetType == 0x00) Stats->OutputConverters++;
-    if (WidgetType == 0x04) Stats->PinWidgets++;
+
+    if (WidgetType == 0x00) {
+      Stats->OutputConverters++;
+
+      if (Stats->ConverterNode == 0) {
+        Stats->ConverterNode = Node;
+        Stats->ConverterWidgetCaps = Response;
+
+        if (!EFI_ERROR (HdaGetParameter (PciIo, Codec, Node, 0x0A, &Response))) {
+          Stats->ImmediateCommands++;
+          Stats->ConverterPcmCaps = Response;
+          Stats->StreamCapabilityEvidence++;
+        }
+
+        if (!EFI_ERROR (HdaGetParameter (PciIo, Codec, Node, 0x0B, &Response))) {
+          Stats->ImmediateCommands++;
+          Stats->ConverterStreamFormats = Response;
+          Stats->StreamCapabilityEvidence++;
+        }
+      }
+    }
+
+    if (WidgetType == 0x04) {
+      Stats->PinWidgets++;
+
+      if (Stats->PinNode == 0) {
+        UINT32 ConnectionLength;
+        Stats->PinNode = Node;
+        Stats->PinWidgetCaps = Response;
+
+        if (!EFI_ERROR (HdaGetParameter (PciIo, Codec, Node, 0x0C, &Response))) {
+          Stats->ImmediateCommands++;
+          Stats->PinCapabilities = Response;
+          Stats->RouteEvidence++;
+        }
+
+        if (!EFI_ERROR (HdaImmediateCommand (
+                          PciIo,
+                          HdaVerb (Codec, Node, 0xF1C, 0),
+                          &Response
+                          ))) {
+          Stats->ImmediateCommands++;
+          Stats->PinConfigDefault = Response;
+          Stats->RouteEvidence++;
+        }
+
+        if (!EFI_ERROR (HdaImmediateCommand (
+                          PciIo,
+                          HdaVerb (Codec, Node, 0xF07, 0),
+                          &Response
+                          ))) {
+          Stats->ImmediateCommands++;
+          Stats->PinControl = Response & 0xFF;
+          Stats->RouteEvidence++;
+        }
+
+        if (!EFI_ERROR (HdaImmediateCommand (
+                          PciIo,
+                          HdaVerb (Codec, Node, 0xF0C, 0),
+                          &Response
+                          ))) {
+          Stats->ImmediateCommands++;
+          Stats->PinEapd = Response & 0xFF;
+          Stats->RouteEvidence++;
+        }
+
+        ConnectionLength = 0;
+        if (!EFI_ERROR (HdaGetParameter (PciIo, Codec, Node, 0x0E, &Response))) {
+          Stats->ImmediateCommands++;
+          ConnectionLength = Response;
+          Stats->PinConnectionListLength = Response;
+          Stats->RouteEvidence++;
+        }
+
+        if ((ConnectionLength & 0x7F) != 0) {
+          if (!EFI_ERROR (HdaImmediateCommand (
+                            PciIo,
+                            HdaVerb (Codec, Node, 0xF02, 0),
+                            &Response
+                            ))) {
+            Stats->ImmediateCommands++;
+            Stats->PinFirstConnection = Response;
+            Stats->RouteEvidence++;
+          }
+        }
+      }
+    }
   }
 }
 
@@ -923,7 +1039,85 @@ STATIC EFI_STATUS ProbeHda (
       Gctl = 0;
       StateSts = 0;
       if (!EFI_ERROR (PciIo->Mem.Read (PciIo, EfiPciIoWidthUint16, 0, 0x00, 1, &Gcap))) {
-        Stats->Gcap = Gcap; Stats->MmioReads++;
+        Stats->Gcap = Gcap;
+        Stats->MmioReads++;
+
+        Stats->OutputStreams = (Gcap >> 12) & 0x0F;
+        Stats->InputStreams = (Gcap >> 8) & 0x0F;
+        Stats->BidirStreams = (Gcap >> 3) & 0x1F;
+        Stats->Dma64Bit = Gcap & 0x01;
+
+        if (Stats->OutputStreams != 0) {
+          UINTN StreamOffset;
+          UINT16 StreamCtlLow;
+          UINT8 StreamCtlHigh;
+          UINT8 StreamStatus;
+          UINT32 StreamLpib;
+          UINT32 StreamCbl;
+          UINT16 StreamLvi;
+          UINT16 StreamFormat;
+          UINT32 StreamBdpl;
+          UINT32 StreamBdpu;
+
+          StreamOffset = 0x80 + (Stats->InputStreams * 0x20);
+          Stats->FirstOutputStreamOffset = StreamOffset;
+
+          StreamCtlLow = 0;
+          StreamCtlHigh = 0;
+          StreamStatus = 0;
+          StreamLpib = 0;
+          StreamCbl = 0;
+          StreamLvi = 0;
+          StreamFormat = 0;
+          StreamBdpl = 0;
+          StreamBdpu = 0;
+
+          if (!EFI_ERROR (PciIo->Mem.Read (PciIo, EfiPciIoWidthUint16, 0, StreamOffset + 0x00, 1, &StreamCtlLow))) {
+            Stats->MmioReads++;
+            Stats->StreamCapabilityEvidence++;
+          }
+          if (!EFI_ERROR (PciIo->Mem.Read (PciIo, EfiPciIoWidthUint8, 0, StreamOffset + 0x02, 1, &StreamCtlHigh))) {
+            Stats->MmioReads++;
+            Stats->StreamCapabilityEvidence++;
+          }
+          Stats->FirstOutputStreamCtl = StreamCtlLow | ((UINTN)StreamCtlHigh << 16);
+
+          if (!EFI_ERROR (PciIo->Mem.Read (PciIo, EfiPciIoWidthUint8, 0, StreamOffset + 0x03, 1, &StreamStatus))) {
+            Stats->FirstOutputStreamStatus = StreamStatus;
+            Stats->MmioReads++;
+            Stats->StreamCapabilityEvidence++;
+          }
+          if (!EFI_ERROR (PciIo->Mem.Read (PciIo, EfiPciIoWidthUint32, 0, StreamOffset + 0x04, 1, &StreamLpib))) {
+            Stats->FirstOutputStreamLpib = StreamLpib;
+            Stats->MmioReads++;
+            Stats->StreamCapabilityEvidence++;
+          }
+          if (!EFI_ERROR (PciIo->Mem.Read (PciIo, EfiPciIoWidthUint32, 0, StreamOffset + 0x08, 1, &StreamCbl))) {
+            Stats->FirstOutputStreamCbl = StreamCbl;
+            Stats->MmioReads++;
+            Stats->StreamCapabilityEvidence++;
+          }
+          if (!EFI_ERROR (PciIo->Mem.Read (PciIo, EfiPciIoWidthUint16, 0, StreamOffset + 0x0C, 1, &StreamLvi))) {
+            Stats->FirstOutputStreamLvi = StreamLvi;
+            Stats->MmioReads++;
+            Stats->StreamCapabilityEvidence++;
+          }
+          if (!EFI_ERROR (PciIo->Mem.Read (PciIo, EfiPciIoWidthUint16, 0, StreamOffset + 0x12, 1, &StreamFormat))) {
+            Stats->FirstOutputStreamFormat = StreamFormat;
+            Stats->MmioReads++;
+            Stats->StreamCapabilityEvidence++;
+          }
+          if (!EFI_ERROR (PciIo->Mem.Read (PciIo, EfiPciIoWidthUint32, 0, StreamOffset + 0x18, 1, &StreamBdpl))) {
+            Stats->FirstOutputStreamBdpl = StreamBdpl;
+            Stats->MmioReads++;
+            Stats->StreamCapabilityEvidence++;
+          }
+          if (!EFI_ERROR (PciIo->Mem.Read (PciIo, EfiPciIoWidthUint32, 0, StreamOffset + 0x1C, 1, &StreamBdpu))) {
+            Stats->FirstOutputStreamBdpu = StreamBdpu;
+            Stats->MmioReads++;
+            Stats->StreamCapabilityEvidence++;
+          }
+        }
       }
       if (!EFI_ERROR (PciIo->Mem.Read (PciIo, EfiPciIoWidthUint8, 0, 0x02, 1, &Vmin))) {
         Stats->Vmin = Vmin; Stats->MmioReads++;
@@ -1130,6 +1324,33 @@ STATIC EFI_STATUS SaveDiag (
   if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_WIDGET_COUNT", Hda->WidgetCount);
   if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_OUTPUT_CONVERTERS", Hda->OutputConverters);
   if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_PIN_WIDGETS", Hda->PinWidgets);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_CONVERTER_NODE", Hda->ConverterNode);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_CONVERTER_WIDGET_CAPS", Hda->ConverterWidgetCaps);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_CONVERTER_PCM_CAPS", Hda->ConverterPcmCaps);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_CONVERTER_STREAM_FORMATS", Hda->ConverterStreamFormats);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_PIN_NODE", Hda->PinNode);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_PIN_WIDGET_CAPS", Hda->PinWidgetCaps);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_PIN_CAPABILITIES", Hda->PinCapabilities);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_PIN_CONFIG_DEFAULT", Hda->PinConfigDefault);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_PIN_CONTROL", Hda->PinControl);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_PIN_EAPD", Hda->PinEapd);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_PIN_CONNECTION_LIST_LENGTH", Hda->PinConnectionListLength);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_PIN_FIRST_CONNECTION", Hda->PinFirstConnection);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_ROUTE_EVIDENCE", Hda->RouteEvidence);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_INPUT_STREAMS", Hda->InputStreams);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_OUTPUT_STREAMS", Hda->OutputStreams);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_BIDIR_STREAMS", Hda->BidirStreams);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_DMA64", Hda->Dma64Bit);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_FIRST_OUTPUT_STREAM_OFFSET", Hda->FirstOutputStreamOffset);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_FIRST_OUTPUT_STREAM_CTL", Hda->FirstOutputStreamCtl);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_FIRST_OUTPUT_STREAM_STATUS", Hda->FirstOutputStreamStatus);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_FIRST_OUTPUT_STREAM_LPIB", Hda->FirstOutputStreamLpib);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_FIRST_OUTPUT_STREAM_CBL", Hda->FirstOutputStreamCbl);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_FIRST_OUTPUT_STREAM_LVI", Hda->FirstOutputStreamLvi);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_FIRST_OUTPUT_STREAM_FORMAT", Hda->FirstOutputStreamFormat);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_FIRST_OUTPUT_STREAM_BDPL", Hda->FirstOutputStreamBdpl);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_FIRST_OUTPUT_STREAM_BDPU", Hda->FirstOutputStreamBdpu);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_STREAM_CAPABILITY_EVIDENCE", Hda->StreamCapabilityEvidence);
   if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_KEYBOARD_STATUS", (UINTN)KeyboardStatus);
   if (!EFI_ERROR (Status)) Status = FileWriteAscii (File, KeyboardPassed ? "OMNI_KEYBOARD_PASS\n" : "OMNI_KEYBOARD_UNPROVEN\n");
   if (!EFI_ERROR (Status)) Status = FileWriteAscii (File, NavigationPassed ? "OMNI_NAVIGATION_INPUT_PASS\n" : "OMNI_NAVIGATION_INPUT_UNPROVEN\n");
@@ -1637,6 +1858,34 @@ UefiMain (
   WriteStat ("OMNI_HDA_WIDGET_COUNT", Hda.WidgetCount);
   WriteStat ("OMNI_HDA_OUTPUT_CONVERTERS", Hda.OutputConverters);
   WriteStat ("OMNI_HDA_PIN_WIDGETS", Hda.PinWidgets);
+  WriteStat ("OMNI_HDA_CONVERTER_NODE", Hda.ConverterNode);
+  WriteStat ("OMNI_HDA_CONVERTER_PCM_CAPS", Hda.ConverterPcmCaps);
+  WriteStat ("OMNI_HDA_CONVERTER_STREAM_FORMATS", Hda.ConverterStreamFormats);
+  WriteStat ("OMNI_HDA_PIN_NODE", Hda.PinNode);
+  WriteStat ("OMNI_HDA_PIN_CAPABILITIES", Hda.PinCapabilities);
+  WriteStat ("OMNI_HDA_PIN_CONFIG_DEFAULT", Hda.PinConfigDefault);
+  WriteStat ("OMNI_HDA_PIN_CONTROL", Hda.PinControl);
+  WriteStat ("OMNI_HDA_PIN_EAPD", Hda.PinEapd);
+  WriteStat ("OMNI_HDA_PIN_CONNECTION_LIST_LENGTH", Hda.PinConnectionListLength);
+  WriteStat ("OMNI_HDA_PIN_FIRST_CONNECTION", Hda.PinFirstConnection);
+  WriteStat ("OMNI_HDA_ROUTE_EVIDENCE", Hda.RouteEvidence);
+  WriteStat ("OMNI_HDA_INPUT_STREAMS", Hda.InputStreams);
+  WriteStat ("OMNI_HDA_OUTPUT_STREAMS", Hda.OutputStreams);
+  WriteStat ("OMNI_HDA_BIDIR_STREAMS", Hda.BidirStreams);
+  WriteStat ("OMNI_HDA_DMA64", Hda.Dma64Bit);
+  WriteStat ("OMNI_HDA_FIRST_OUTPUT_STREAM_OFFSET", Hda.FirstOutputStreamOffset);
+  WriteStat ("OMNI_HDA_FIRST_OUTPUT_STREAM_CTL", Hda.FirstOutputStreamCtl);
+  WriteStat ("OMNI_HDA_FIRST_OUTPUT_STREAM_STATUS", Hda.FirstOutputStreamStatus);
+  WriteStat ("OMNI_HDA_FIRST_OUTPUT_STREAM_LPIB", Hda.FirstOutputStreamLpib);
+  WriteStat ("OMNI_HDA_FIRST_OUTPUT_STREAM_CBL", Hda.FirstOutputStreamCbl);
+  WriteStat ("OMNI_HDA_FIRST_OUTPUT_STREAM_LVI", Hda.FirstOutputStreamLvi);
+  WriteStat ("OMNI_HDA_FIRST_OUTPUT_STREAM_FORMAT", Hda.FirstOutputStreamFormat);
+  WriteStat ("OMNI_HDA_FIRST_OUTPUT_STREAM_BDPL", Hda.FirstOutputStreamBdpl);
+  WriteStat ("OMNI_HDA_FIRST_OUTPUT_STREAM_BDPU", Hda.FirstOutputStreamBdpu);
+  WriteStat ("OMNI_HDA_STREAM_CAPABILITY_EVIDENCE", Hda.StreamCapabilityEvidence);
+  WriteText ((Hda.RouteEvidence != 0) ? "OMNI_HDA_ROUTE_CAPS_PASS\n" : "OMNI_HDA_ROUTE_CAPS_MISS\n");
+  WriteText (((Hda.OutputStreams != 0) && (Hda.StreamCapabilityEvidence != 0)) ?
+             "OMNI_HDA_STREAM_CAPS_PASS\n" : "OMNI_HDA_STREAM_CAPS_MISS\n");
   WriteText (EFI_ERROR (HdaStatus) ? "OMNI_HDA_PROBE_MISS\n" : "OMNI_HDA_PROBE_PASS\n");
   SaveTraceStage (ImageHandle, SystemTable, "AFTER_HDA");
 
