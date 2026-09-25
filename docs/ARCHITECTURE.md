@@ -8,7 +8,7 @@
 4. **Verification** — model checking, sanitizers, fuzzing, replay and differential tests close software uncertainty.
 5. **Hardware-in-the-loop** — only after software gates pass do we accept physical ASUS/HDA/TPM behavior as remaining uncertainty.
 
-The speech frontend belongs to the **Semantics** plane. Accessibility text is normalized into deterministic, renderer-neutral speech tokens before any synthesis backend is selected. The normalization contract covers French/English number expansion, firmware acronyms and clause intent while deliberately excluding formant/Klatt parameters, operating-system audio APIs and prerecorded WAV assets. This keeps HII/IFR semantics testable independently from the future natural VoiceCore renderer and provides a reference oracle for differential testing of the UEFI/C implementation.
+The speech path is layered rather than monolithic. The **Semantics** plane normalizes HII/IFR accessibility text into deterministic renderer-neutral tokens; the versioned phoneme frontend converts those semantics into a bounded firmware stream; and a separate PCM quality gate rejects clipping, excessive DC offset, silence and malformed 48 kHz PCM before audio can be accepted. Formant/Klatt parameters, operating-system audio APIs and prerecorded WAV assets remain outside the target VoiceCore renderer. Naturalness and intelligibility are separate release gates and cannot be inferred from PCM validity alone.
 
 Merkle verification treats manifests as untrusted input. Relative paths must be canonical, traversal is rejected, symlink resolution must stay inside the declared evidence root, and digest fields must be well-formed before comparison.
 
