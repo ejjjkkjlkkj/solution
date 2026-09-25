@@ -4,7 +4,15 @@ import argparse
 import json
 from pathlib import Path
 
-from . import ceiling, firmware, ifr, voice_frontend, voice_pipeline, voice_quality
+from . import (
+    ceiling,
+    firmware,
+    ifr,
+    voice_frontend,
+    voice_pipeline,
+    voice_quality,
+    voice_release,
+)
 
 
 def _load_manifest(path: Path, label: str) -> dict[str, str]:
@@ -39,6 +47,9 @@ def main() -> int:
     pcm_check.add_argument("pcm", type=Path)
     pcm_check.add_argument("--channels", type=int, choices=(1, 2), default=1)
 
+    voice_release_cmd = sub.add_parser("voice-release")
+    voice_release_cmd.add_argument("manifest", type=Path)
+
     sw = sub.add_parser("software-ceiling")
     sw.add_argument("manifest", type=Path)
 
@@ -68,7 +79,15 @@ def main() -> int:
         return 0
     if args.command == "voice-compile":
         stream = voice_pipeline.compile_speech_stream(args.text, args.lang)
-        print(json.dumps({"version": voice_pipeline.FRONTEND_STREAM_VERSION, "bytes": list(stream)}, indent=2))
+        print(
+            json.dumps(
+                {
+                    "version": voice_pipeline.FRONTEND_STREAM_VERSION,
+                    "bytes": list(stream),
+                },
+                indent=2,
+            )
+        )
         return 0
     if args.command == "voice-pcm-check":
         report = voice_quality.inspect_pcm16le(
@@ -77,6 +96,12 @@ def main() -> int:
         )
         print(json.dumps(report.to_dict(), indent=2, sort_keys=True))
         return 0 if report.clean else 1
+    if args.command == "voice-release":
+        result = voice_release.evaluate_voice_release(
+            _load_manifest(args.manifest, "voice release")
+        )
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return 0 if result["status"] == "VOICE_RELEASE_PASS" else 1
     if args.command == "software-ceiling":
         result = ceiling.evaluate(_load_manifest(args.manifest, "software ceiling"))
         print(json.dumps(result, indent=2, sort_keys=True))
