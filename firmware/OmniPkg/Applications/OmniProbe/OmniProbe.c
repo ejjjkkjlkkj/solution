@@ -99,6 +99,16 @@ typedef struct {
   UINTN FirstOutputStreamBdpl;
   UINTN FirstOutputStreamBdpu;
   UINTN StreamCapabilityEvidence;
+
+  /* PCI/MMIO validity evidence. */
+  UINTN PciAttributesSupported;
+  UINTN PciAttributesOriginal;
+  UINTN PciAttributesAfter;
+  UINTN PciCommandBefore;
+  UINTN PciCommandAfter;
+  UINTN MmioValid;
+  UINTN ControllerResetReady;
+  UINTN InvalidMmioReads;
 } OMNI_HDA_STATS;
 
 STATIC UINTN AppendAsciiBounded (
@@ -1016,9 +1026,14 @@ STATIC EFI_STATUS ProbeHda (
       UINT32 Gctl;
       UINT8 Vmin;
       UINT8 Vmaj;
+      UINT64 SupportedAttributes;
+      UINT64 CurrentAttributes;
+      UINT16 PciCommandBefore;
+      UINT16 PciCommandAfter;
+      EFI_STATUS AttributeStatus;
 
       Stats->Controllers++;
-      if (Stats->Controllers != 1) continue;
+      if (Stats->MmioValid != 0) continue;
 
       Stats->VendorId = VendorId;
       Stats->DeviceId = DeviceId;
@@ -1033,104 +1048,388 @@ STATIC EFI_STATUS ProbeHda (
         Stats->Function = Function;
       }
 
-      Gcap = 0;
-      Vmin = 0;
-      Vmaj = 0;
-      Gctl = 0;
-      StateSts = 0;
-      if (!EFI_ERROR (PciIo->Mem.Read (PciIo, EfiPciIoWidthUint16, 0, 0x00, 1, &Gcap))) {
-        Stats->Gcap = Gcap;
-        Stats->MmioReads++;
+      SupportedAttributes = 0;
+      CurrentAttributes = 0;
+      PciCommandBefore = 0xFFFF;
+      PciCommandAfter = 0xFFFF;
 
-        Stats->OutputStreams = (Gcap >> 12) & 0x0F;
-        Stats->InputStreams = (Gcap >> 8) & 0x0F;
-        Stats->BidirStreams = (Gcap >> 3) & 0x1F;
-        Stats->Dma64Bit = Gcap & 0x01;
+      if (!EFI_ERROR (PciIo->Attributes (
+                               PciIo,
+                               EfiPciIoAttributeOperationSupported,
+                               0,
+                               &SupportedAttributes
+                               ))) {
+        Stats->PciAttributesSupported = (UINTN)SupportedAttributes;
+      }
 
-        if (Stats->OutputStreams != 0) {
-          UINTN StreamOffset;
-          UINT16 StreamCtlLow;
-          UINT8 StreamCtlHigh;
-          UINT8 StreamStatus;
-          UINT32 StreamLpib;
-          UINT32 StreamCbl;
-          UINT16 StreamLvi;
-          UINT16 StreamFormat;
-          UINT32 StreamBdpl;
-          UINT32 StreamBdpu;
+      if (!EFI_ERROR (PciIo->Attributes (
+                               PciIo,
+                               EfiPciIoAttributeOperationGet,
+                               0,
+                               &CurrentAttributes
+                               ))) {
+        Stats->PciAttributesOriginal = (UINTN)CurrentAttributes;
+      }
 
-          StreamOffset = 0x80 + (Stats->InputStreams * 0x20);
-          Stats->FirstOutputStreamOffset = StreamOffset;
+      PciIo->Pci.Read (
+                   PciIo,
+                   EfiPciIoWidthUint16,
+                   0x04,
+                   1,
+                   &PciCommandBefore
+                   );
+      Stats->PciCommandBefore = PciCommandBefore;
 
-          StreamCtlLow = 0;
-          StreamCtlHigh = 0;
-          StreamStatus = 0;
-          StreamLpib = 0;
-          StreamCbl = 0;
-          StreamLvi = 0;
-          StreamFormat = 0;
-          StreamBdpl = 0;
-          StreamBdpu = 0;
+      AttributeStatus = PciIo->Attributes (
+                                 PciIo,
+                                 EfiPciIoAttributeOperationEnable,
+                                 EFI_PCI_IO_ATTRIBUTE_MEMORY |
+                                 EFI_PCI_IO_ATTRIBUTE_BUS_MASTER,
+                                 NULL
+                                 );
+      if (EFI_ERROR (AttributeStatus)) {
+        Stats->InvalidMmioReads++;
+        continue;
+      }
 
-          if (!EFI_ERROR (PciIo->Mem.Read (PciIo, EfiPciIoWidthUint16, 0, StreamOffset + 0x00, 1, &StreamCtlLow))) {
-            Stats->MmioReads++;
-            Stats->StreamCapabilityEvidence++;
-          }
-          if (!EFI_ERROR (PciIo->Mem.Read (PciIo, EfiPciIoWidthUint8, 0, StreamOffset + 0x02, 1, &StreamCtlHigh))) {
-            Stats->MmioReads++;
-            Stats->StreamCapabilityEvidence++;
-          }
-          Stats->FirstOutputStreamCtl = StreamCtlLow | ((UINTN)StreamCtlHigh << 16);
+      CurrentAttributes = 0;
+      if (!EFI_ERROR (PciIo->Attributes (
+                               PciIo,
+                               EfiPciIoAttributeOperationGet,
+                               0,
+                               &CurrentAttributes
+                               ))) {
+        Stats->PciAttributesAfter = (UINTN)CurrentAttributes;
+      }
 
-          if (!EFI_ERROR (PciIo->Mem.Read (PciIo, EfiPciIoWidthUint8, 0, StreamOffset + 0x03, 1, &StreamStatus))) {
-            Stats->FirstOutputStreamStatus = StreamStatus;
-            Stats->MmioReads++;
-            Stats->StreamCapabilityEvidence++;
+      PciIo->Pci.Read (
+                   PciIo,
+                   EfiPciIoWidthUint16,
+                   0x04,
+                   1,
+                   &PciCommandAfter
+                   );
+      Stats->PciCommandAfter = PciCommandAfter;
+
+      Gcap = 0xFFFF;
+      Vmin = 0xFF;
+      Vmaj = 0xFF;
+      Gctl = 0xFFFFFFFF;
+      StateSts = 0xFFFF;
+
+      Status = PciIo->Mem.Read (
+                            PciIo,
+                            EfiPciIoWidthUint16,
+                            0,
+                            0x00,
+                            1,
+                            &Gcap
+                            );
+      if (EFI_ERROR (Status) || (Gcap == 0xFFFF) || (Gcap == 0)) {
+        Stats->InvalidMmioReads++;
+        continue;
+      }
+
+      Stats->Gcap = Gcap;
+      Stats->MmioReads++;
+      Stats->OutputStreams = (Gcap >> 12) & 0x0F;
+      Stats->InputStreams = (Gcap >> 8) & 0x0F;
+      Stats->BidirStreams = (Gcap >> 3) & 0x1F;
+      Stats->Dma64Bit = Gcap & 0x01;
+
+      Status = PciIo->Mem.Read (
+                            PciIo,
+                            EfiPciIoWidthUint8,
+                            0,
+                            0x02,
+                            1,
+                            &Vmin
+                            );
+      if (EFI_ERROR (Status) || (Vmin == 0xFF)) {
+        Stats->InvalidMmioReads++;
+        continue;
+      }
+      Stats->Vmin = Vmin;
+      Stats->MmioReads++;
+
+      Status = PciIo->Mem.Read (
+                            PciIo,
+                            EfiPciIoWidthUint8,
+                            0,
+                            0x03,
+                            1,
+                            &Vmaj
+                            );
+      if (EFI_ERROR (Status) || (Vmaj == 0xFF)) {
+        Stats->InvalidMmioReads++;
+        continue;
+      }
+      Stats->Vmaj = Vmaj;
+      Stats->MmioReads++;
+
+      Status = PciIo->Mem.Read (
+                            PciIo,
+                            EfiPciIoWidthUint32,
+                            0,
+                            0x08,
+                            1,
+                            &Gctl
+                            );
+      if (EFI_ERROR (Status) || (Gctl == 0xFFFFFFFF)) {
+        Stats->InvalidMmioReads++;
+        continue;
+      }
+      Stats->Gctl = Gctl;
+      Stats->MmioReads++;
+
+      if ((Gctl & 0x00000001) == 0) {
+        UINT32 NewGctl;
+        UINTN ResetSpin;
+
+        NewGctl = Gctl | 0x00000001;
+        Status = PciIo->Mem.Write (
+                              PciIo,
+                              EfiPciIoWidthUint32,
+                              0,
+                              0x08,
+                              1,
+                              &NewGctl
+                              );
+        if (EFI_ERROR (Status)) {
+          Stats->InvalidMmioReads++;
+          continue;
+        }
+
+        for (ResetSpin = 0; ResetSpin < 1000; ++ResetSpin) {
+          SystemTable->BootServices->Stall (100);
+          Gctl = 0xFFFFFFFF;
+          Status = PciIo->Mem.Read (
+                                PciIo,
+                                EfiPciIoWidthUint32,
+                                0,
+                                0x08,
+                                1,
+                                &Gctl
+                                );
+          if (EFI_ERROR (Status) || (Gctl == 0xFFFFFFFF)) {
+            continue;
           }
-          if (!EFI_ERROR (PciIo->Mem.Read (PciIo, EfiPciIoWidthUint32, 0, StreamOffset + 0x04, 1, &StreamLpib))) {
-            Stats->FirstOutputStreamLpib = StreamLpib;
-            Stats->MmioReads++;
-            Stats->StreamCapabilityEvidence++;
-          }
-          if (!EFI_ERROR (PciIo->Mem.Read (PciIo, EfiPciIoWidthUint32, 0, StreamOffset + 0x08, 1, &StreamCbl))) {
-            Stats->FirstOutputStreamCbl = StreamCbl;
-            Stats->MmioReads++;
-            Stats->StreamCapabilityEvidence++;
-          }
-          if (!EFI_ERROR (PciIo->Mem.Read (PciIo, EfiPciIoWidthUint16, 0, StreamOffset + 0x0C, 1, &StreamLvi))) {
-            Stats->FirstOutputStreamLvi = StreamLvi;
-            Stats->MmioReads++;
-            Stats->StreamCapabilityEvidence++;
-          }
-          if (!EFI_ERROR (PciIo->Mem.Read (PciIo, EfiPciIoWidthUint16, 0, StreamOffset + 0x12, 1, &StreamFormat))) {
-            Stats->FirstOutputStreamFormat = StreamFormat;
-            Stats->MmioReads++;
-            Stats->StreamCapabilityEvidence++;
-          }
-          if (!EFI_ERROR (PciIo->Mem.Read (PciIo, EfiPciIoWidthUint32, 0, StreamOffset + 0x18, 1, &StreamBdpl))) {
-            Stats->FirstOutputStreamBdpl = StreamBdpl;
-            Stats->MmioReads++;
-            Stats->StreamCapabilityEvidence++;
-          }
-          if (!EFI_ERROR (PciIo->Mem.Read (PciIo, EfiPciIoWidthUint32, 0, StreamOffset + 0x1C, 1, &StreamBdpu))) {
-            Stats->FirstOutputStreamBdpu = StreamBdpu;
-            Stats->MmioReads++;
-            Stats->StreamCapabilityEvidence++;
+          if ((Gctl & 0x00000001) != 0) {
+            break;
           }
         }
       }
-      if (!EFI_ERROR (PciIo->Mem.Read (PciIo, EfiPciIoWidthUint8, 0, 0x02, 1, &Vmin))) {
-        Stats->Vmin = Vmin; Stats->MmioReads++;
+
+      if ((Gctl == 0xFFFFFFFF) || ((Gctl & 0x00000001) == 0)) {
+        Stats->InvalidMmioReads++;
+        continue;
       }
-      if (!EFI_ERROR (PciIo->Mem.Read (PciIo, EfiPciIoWidthUint8, 0, 0x03, 1, &Vmaj))) {
-        Stats->Vmaj = Vmaj; Stats->MmioReads++;
+
+      Stats->Gctl = Gctl;
+      Stats->ControllerResetReady = 1;
+      SystemTable->BootServices->Stall (1000);
+
+      StateSts = 0xFFFF;
+      Status = PciIo->Mem.Read (
+                            PciIo,
+                            EfiPciIoWidthUint16,
+                            0,
+                            0x0E,
+                            1,
+                            &StateSts
+                            );
+      if (EFI_ERROR (Status) || (StateSts == 0xFFFF)) {
+        Stats->InvalidMmioReads++;
+        continue;
       }
-      if (!EFI_ERROR (PciIo->Mem.Read (PciIo, EfiPciIoWidthUint32, 0, 0x08, 1, &Gctl))) {
-        Stats->Gctl = Gctl; Stats->MmioReads++;
+      Stats->MmioReads++;
+      Stats->CodecBitmap = StateSts & 0x7FFF;
+
+      if (Stats->CodecBitmap == 0) {
+        continue;
       }
-      if (!EFI_ERROR (PciIo->Mem.Read (PciIo, EfiPciIoWidthUint16, 0, 0x0E, 1, &StateSts))) {
-        Stats->CodecBitmap = StateSts & 0x7FFF; Stats->MmioReads++;
+
+      Stats->MmioValid = 1;
+
+      if (Stats->OutputStreams != 0) {
+        UINTN StreamOffset;
+        UINT16 StreamCtlLow;
+        UINT8 StreamCtlHigh;
+        UINT8 StreamStatus;
+        UINT32 StreamLpib;
+        UINT32 StreamCbl;
+        UINT16 StreamLvi;
+        UINT16 StreamFormat;
+        UINT32 StreamBdpl;
+        UINT32 StreamBdpu;
+        BOOLEAN StreamCtlLowValid;
+        BOOLEAN StreamCtlHighValid;
+
+        StreamOffset = 0x80 + (Stats->InputStreams * 0x20);
+        Stats->FirstOutputStreamOffset = StreamOffset;
+
+        StreamCtlLow = 0;
+        StreamCtlHigh = 0;
+        StreamStatus = 0;
+        StreamLpib = 0;
+        StreamCbl = 0;
+        StreamLvi = 0;
+        StreamFormat = 0;
+        StreamBdpl = 0;
+        StreamBdpu = 0;
+        StreamCtlLowValid = FALSE;
+        StreamCtlHighValid = FALSE;
+
+        Status = PciIo->Mem.Read (
+                              PciIo,
+                              EfiPciIoWidthUint16,
+                              0,
+                              StreamOffset + 0x00,
+                              1,
+                              &StreamCtlLow
+                              );
+        if (!EFI_ERROR (Status) && (StreamCtlLow != 0xFFFF)) {
+          Stats->MmioReads++;
+          Stats->StreamCapabilityEvidence++;
+          StreamCtlLowValid = TRUE;
+        } else {
+          Stats->InvalidMmioReads++;
+        }
+
+        Status = PciIo->Mem.Read (
+                              PciIo,
+                              EfiPciIoWidthUint8,
+                              0,
+                              StreamOffset + 0x02,
+                              1,
+                              &StreamCtlHigh
+                              );
+        if (!EFI_ERROR (Status) && (StreamCtlHigh != 0xFF)) {
+          Stats->MmioReads++;
+          Stats->StreamCapabilityEvidence++;
+          StreamCtlHighValid = TRUE;
+        } else {
+          Stats->InvalidMmioReads++;
+        }
+
+        if (StreamCtlLowValid && StreamCtlHighValid) {
+          Stats->FirstOutputStreamCtl =
+            StreamCtlLow | ((UINTN)StreamCtlHigh << 16);
+        }
+
+        Status = PciIo->Mem.Read (
+                              PciIo,
+                              EfiPciIoWidthUint8,
+                              0,
+                              StreamOffset + 0x03,
+                              1,
+                              &StreamStatus
+                              );
+        if (!EFI_ERROR (Status) && (StreamStatus != 0xFF)) {
+          Stats->FirstOutputStreamStatus = StreamStatus;
+          Stats->MmioReads++;
+          Stats->StreamCapabilityEvidence++;
+        } else {
+          Stats->InvalidMmioReads++;
+        }
+
+        Status = PciIo->Mem.Read (
+                              PciIo,
+                              EfiPciIoWidthUint32,
+                              0,
+                              StreamOffset + 0x04,
+                              1,
+                              &StreamLpib
+                              );
+        if (!EFI_ERROR (Status) && (StreamLpib != 0xFFFFFFFF)) {
+          Stats->FirstOutputStreamLpib = StreamLpib;
+          Stats->MmioReads++;
+          Stats->StreamCapabilityEvidence++;
+        } else {
+          Stats->InvalidMmioReads++;
+        }
+
+        Status = PciIo->Mem.Read (
+                              PciIo,
+                              EfiPciIoWidthUint32,
+                              0,
+                              StreamOffset + 0x08,
+                              1,
+                              &StreamCbl
+                              );
+        if (!EFI_ERROR (Status) && (StreamCbl != 0xFFFFFFFF)) {
+          Stats->FirstOutputStreamCbl = StreamCbl;
+          Stats->MmioReads++;
+          Stats->StreamCapabilityEvidence++;
+        } else {
+          Stats->InvalidMmioReads++;
+        }
+
+        Status = PciIo->Mem.Read (
+                              PciIo,
+                              EfiPciIoWidthUint16,
+                              0,
+                              StreamOffset + 0x0C,
+                              1,
+                              &StreamLvi
+                              );
+        if (!EFI_ERROR (Status) && (StreamLvi != 0xFFFF)) {
+          Stats->FirstOutputStreamLvi = StreamLvi;
+          Stats->MmioReads++;
+          Stats->StreamCapabilityEvidence++;
+        } else {
+          Stats->InvalidMmioReads++;
+        }
+
+        Status = PciIo->Mem.Read (
+                              PciIo,
+                              EfiPciIoWidthUint16,
+                              0,
+                              StreamOffset + 0x12,
+                              1,
+                              &StreamFormat
+                              );
+        if (!EFI_ERROR (Status) && (StreamFormat != 0xFFFF)) {
+          Stats->FirstOutputStreamFormat = StreamFormat;
+          Stats->MmioReads++;
+          Stats->StreamCapabilityEvidence++;
+        } else {
+          Stats->InvalidMmioReads++;
+        }
+
+        Status = PciIo->Mem.Read (
+                              PciIo,
+                              EfiPciIoWidthUint32,
+                              0,
+                              StreamOffset + 0x18,
+                              1,
+                              &StreamBdpl
+                              );
+        if (!EFI_ERROR (Status) && (StreamBdpl != 0xFFFFFFFF)) {
+          Stats->FirstOutputStreamBdpl = StreamBdpl;
+          Stats->MmioReads++;
+          Stats->StreamCapabilityEvidence++;
+        } else {
+          Stats->InvalidMmioReads++;
+        }
+
+        Status = PciIo->Mem.Read (
+                              PciIo,
+                              EfiPciIoWidthUint32,
+                              0,
+                              StreamOffset + 0x1C,
+                              1,
+                              &StreamBdpu
+                              );
+        if (!EFI_ERROR (Status) && (StreamBdpu != 0xFFFFFFFF)) {
+          Stats->FirstOutputStreamBdpu = StreamBdpu;
+          Stats->MmioReads++;
+          Stats->StreamCapabilityEvidence++;
+        } else {
+          Stats->InvalidMmioReads++;
+        }
       }
+
       ProbeHdaCodecTopology (PciIo, Stats);
     }
   }
@@ -1351,6 +1650,14 @@ STATIC EFI_STATUS SaveDiag (
   if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_FIRST_OUTPUT_STREAM_BDPL", Hda->FirstOutputStreamBdpl);
   if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_FIRST_OUTPUT_STREAM_BDPU", Hda->FirstOutputStreamBdpu);
   if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_STREAM_CAPABILITY_EVIDENCE", Hda->StreamCapabilityEvidence);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_PCI_ATTRIBUTES_SUPPORTED", Hda->PciAttributesSupported);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_PCI_ATTRIBUTES_ORIGINAL", Hda->PciAttributesOriginal);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_PCI_ATTRIBUTES_AFTER", Hda->PciAttributesAfter);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_PCI_COMMAND_BEFORE", Hda->PciCommandBefore);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_PCI_COMMAND_AFTER", Hda->PciCommandAfter);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_MMIO_VALID", Hda->MmioValid);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_CONTROLLER_RESET_READY", Hda->ControllerResetReady);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_INVALID_MMIO_READS", Hda->InvalidMmioReads);
   if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_KEYBOARD_STATUS", (UINTN)KeyboardStatus);
   if (!EFI_ERROR (Status)) Status = FileWriteAscii (File, KeyboardPassed ? "OMNI_KEYBOARD_PASS\n" : "OMNI_KEYBOARD_UNPROVEN\n");
   if (!EFI_ERROR (Status)) Status = FileWriteAscii (File, NavigationPassed ? "OMNI_NAVIGATION_INPUT_PASS\n" : "OMNI_NAVIGATION_INPUT_UNPROVEN\n");
@@ -1883,6 +2190,14 @@ UefiMain (
   WriteStat ("OMNI_HDA_FIRST_OUTPUT_STREAM_BDPL", Hda.FirstOutputStreamBdpl);
   WriteStat ("OMNI_HDA_FIRST_OUTPUT_STREAM_BDPU", Hda.FirstOutputStreamBdpu);
   WriteStat ("OMNI_HDA_STREAM_CAPABILITY_EVIDENCE", Hda.StreamCapabilityEvidence);
+  WriteStat ("OMNI_HDA_PCI_ATTRIBUTES_SUPPORTED", Hda.PciAttributesSupported);
+  WriteStat ("OMNI_HDA_PCI_ATTRIBUTES_ORIGINAL", Hda.PciAttributesOriginal);
+  WriteStat ("OMNI_HDA_PCI_ATTRIBUTES_AFTER", Hda.PciAttributesAfter);
+  WriteStat ("OMNI_HDA_PCI_COMMAND_BEFORE", Hda.PciCommandBefore);
+  WriteStat ("OMNI_HDA_PCI_COMMAND_AFTER", Hda.PciCommandAfter);
+  WriteStat ("OMNI_HDA_MMIO_VALID", Hda.MmioValid);
+  WriteStat ("OMNI_HDA_CONTROLLER_RESET_READY", Hda.ControllerResetReady);
+  WriteStat ("OMNI_HDA_INVALID_MMIO_READS", Hda.InvalidMmioReads);
   WriteText ((Hda.RouteEvidence != 0) ? "OMNI_HDA_ROUTE_CAPS_PASS\n" : "OMNI_HDA_ROUTE_CAPS_MISS\n");
   WriteText (((Hda.OutputStreams != 0) && (Hda.StreamCapabilityEvidence != 0)) ?
              "OMNI_HDA_STREAM_CAPS_PASS\n" : "OMNI_HDA_STREAM_CAPS_MISS\n");
