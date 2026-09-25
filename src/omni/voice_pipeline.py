@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 from .voice_frontend import Language, TokenKind, normalize_for_speech
-from .voice_phonemes import (\n    FRONTEND_STREAM_VERSION,\n    PhonemeId,\n    frontend_phonemes,\n    validate_frontend_stream,\n)
+from .voice_phonemes import (
+    FRONTEND_STREAM_VERSION,
+    PhonemeId,
+    frontend_phonemes,
+    validate_frontend_stream,
+)
 
 MAX_TEXT_CHARS = 4096
 MAX_STREAM_BYTES = 32768
@@ -44,8 +49,7 @@ def compile_speech_stream(text: str, language: Language | str = Language.FR) -> 
         else:
             segment = token.text
 
-        encoded = frontend_phonemes(segment, lang.value)
-        out.extend(encoded)
+        out.extend(frontend_phonemes(segment, lang.value))
         have_spoken_segment = True
 
         if len(out) > MAX_STREAM_BYTES:
