@@ -4,16 +4,29 @@ import argparse
 import json
 from pathlib import Path
 
-from . import ceiling, firmware, ifr, voice_frontend, voice_pipeline, voice_quality
+from . import (
+    ceiling,
+    firmware,
+    ifr,
+    voice_frontend,
+    voice_pipeline,
+    voice_quality,
+    voice_release,
+)
+
+
+def _load_json_object(path: Path, label: str) -> dict[str, object]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict) or not all(isinstance(k, str) for k in data):
+        raise SystemExit(f"{label} manifest must be a JSON object with string keys")
+    return data
 
 
 def _load_manifest(path: Path, label: str) -> dict[str, str]:
-    data = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(data, dict) or not all(
-        isinstance(k, str) and isinstance(v, str) for k, v in data.items()
-    ):
+    data = _load_json_object(path, label)
+    if not all(isinstance(v, str) for v in data.values()):
         raise SystemExit(f"{label} manifest must be a JSON object of string statuses")
-    return data
+    return {key: value for key, value in data.items() if isinstance(value, str)}
 
 
 def main() -> int:
@@ -38,6 +51,10 @@ def main() -> int:
     pcm_check = sub.add_parser("voice-pcm-check")
     pcm_check.add_argument("pcm", type=Path)
     pcm_check.add_argument("--channels", type=int, choices=(1, 2), default=1)
+
+    voice_release_cmd = sub.add_parser("voice-release")
+    voice_release_cmd.add_argument("manifest", type=Path)
+    voice_release_cmd.add_argument("--expected-head")
 
     sw = sub.add_parser("software-ceiling")
     sw.add_argument("manifest", type=Path)
@@ -68,7 +85,15 @@ def main() -> int:
         return 0
     if args.command == "voice-compile":
         stream = voice_pipeline.compile_speech_stream(args.text, args.lang)
-        print(json.dumps({"version": voice_pipeline.FRONTEND_STREAM_VERSION, "bytes": list(stream)}, indent=2))
+        print(
+            json.dumps(
+                {
+                    "version": voice_pipeline.FRONTEND_STREAM_VERSION,
+                    "bytes": list(stream),
+                },
+                indent=2,
+            )
+        )
         return 0
     if args.command == "voice-pcm-check":
         report = voice_quality.inspect_pcm16le(
@@ -77,12 +102,21 @@ def main() -> int:
         )
         print(json.dumps(report.to_dict(), indent=2, sort_keys=True))
         return 0 if report.clean else 1
+    if args.command == "voice-release":
+        result = voice_release.evaluate_voice_release(
+            _load_json_object(args.manifest, "voice release"),
+            expected_head_sha=args.expected_head,
+        )
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return 0 if result["status"] == "VOICE_RELEASE_PASS" else 1
     if args.command == "software-ceiling":
         result = ceiling.evaluate(_load_manifest(args.manifest, "software ceiling"))
         print(json.dumps(result, indent=2, sort_keys=True))
         return 0 if result["status"] == "SOFTWARE_CEILING_PASS" else 1
     if args.command == "hardware-boundary":
-        result = ceiling.evaluate_hardware(_load_manifest(args.manifest, "hardware boundary"))
+        result = ceiling.evaluate_hardware(
+            _load_manifest(args.manifest, "hardware boundary")
+        )
         print(json.dumps(result, indent=2, sort_keys=True))
         return 0 if result["status"] == "HARDWARE_BOUNDARY_PASS" else 1
     return 2

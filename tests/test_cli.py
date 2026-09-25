@@ -69,5 +69,19 @@ class CliExitStatusTests(unittest.TestCase):
         self.assertIn("silence-or-near-silence-channel-0", payload["violations"])
 
 
+    def test_voice_release_cli_rejects_empty_manifest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "voice.json"
+            path.write_text("{}", encoding="utf-8")
+            stdout = io.StringIO()
+            with patch("sys.argv", ["omni", "voice-release", str(path)]):
+                with redirect_stdout(stdout):
+                    rc = cli.main()
+        self.assertEqual(rc, 1)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["status"], "VOICE_RELEASE_INCOMPLETE")
+        self.assertIn("french_intelligibility", payload["missing"])
+
+
 if __name__ == "__main__":
     unittest.main()
