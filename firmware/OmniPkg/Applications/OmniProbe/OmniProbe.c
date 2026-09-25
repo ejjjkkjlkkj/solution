@@ -16,6 +16,12 @@
 #define OMNI_CHALLENGE_FILE L"\\OMNI-CHALLENGE.TXT"
 #define OMNI_CHALLENGE_HEX_LEN 64
 #define OMNI_UUID_TEXT_LEN      36
+#define OMNI_NVRAM_NAME          L"OmniBootEvidence"
+
+STATIC EFI_GUID mOmniEvidenceVariableGuid = {
+  0x8d8a7e66, 0x0a4d, 0x4c9f,
+  { 0x9d, 0x43, 0x8e, 0x1b, 0x68, 0xd8, 0x4f, 0x06 }
+};
 
 typedef struct {
   UINTN Handles;
@@ -63,6 +69,65 @@ typedef struct {
   UINTN OutputConverters;
   UINTN PinWidgets;
 } OMNI_HDA_STATS;
+
+STATIC UINTN AppendAsciiBounded (
+  OUT CHAR8       *Buffer,
+  IN UINTN        Capacity,
+  IN UINTN        Index,
+  IN CONST CHAR8  *Text
+  )
+{
+  if ((Buffer == NULL) || (Text == NULL) || (Capacity == 0)) {
+    return Index;
+  }
+
+  while ((*Text != '\0') && ((Index + 1) < Capacity)) {
+    Buffer[Index++] = *Text++;
+  }
+  Buffer[Index] = '\0';
+  return Index;
+}
+
+STATIC EFI_STATUS SaveNvramStage (
+  EFI_SYSTEM_TABLE *SystemTable,
+  CONST CHAR8      *Stage,
+  CONST CHAR8      *Challenge
+  )
+{
+  CHAR8 Buffer[192];
+  UINTN Index;
+  UINT32 Attributes;
+
+  if ((SystemTable == NULL) || (SystemTable->RuntimeServices == NULL) || (Stage == NULL)) {
+    return EFI_INVALID_PARAMETER;
+  }
+
+  Buffer[0] = '\0';
+  Index = 0;
+  Index = AppendAsciiBounded (Buffer, sizeof (Buffer), Index, "OMNI_NVRAM_V1\n");
+  Index = AppendAsciiBounded (Buffer, sizeof (Buffer), Index, "STAGE=");
+  Index = AppendAsciiBounded (Buffer, sizeof (Buffer), Index, Stage);
+  Index = AppendAsciiBounded (Buffer, sizeof (Buffer), Index, "\n");
+
+  if (Challenge != NULL) {
+    Index = AppendAsciiBounded (Buffer, sizeof (Buffer), Index, "CHALLENGE=");
+    Index = AppendAsciiBounded (Buffer, sizeof (Buffer), Index, Challenge);
+    Index = AppendAsciiBounded (Buffer, sizeof (Buffer), Index, "\n");
+  }
+
+  Attributes =
+    EFI_VARIABLE_NON_VOLATILE |
+    EFI_VARIABLE_BOOTSERVICE_ACCESS |
+    EFI_VARIABLE_RUNTIME_ACCESS;
+
+  return SystemTable->RuntimeServices->SetVariable (
+                                        OMNI_NVRAM_NAME,
+                                        &mOmniEvidenceVariableGuid,
+                                        Attributes,
+                                        Index,
+                                        Buffer
+                                        );
+}
 
 STATIC VOID SerialInit (VOID) {
   IoWrite8 (OMNI_COM1_BASE + 1, 0x00);
@@ -1451,6 +1516,7 @@ UefiMain (
   EFI_STATUS HdaStatus;
   EFI_STATUS KeyboardStatus;
   EFI_STATUS DiagStatus;
+  EFI_STATUS NvramStatus;
   BOOLEAN HiiPassed;
   BOOLEAN Passed;
   BOOLEAN KeyboardPassed;
@@ -1464,8 +1530,16 @@ UefiMain (
   KeyboardPassed = FALSE;
   NavigationPassed = FALSE;
 
+  /*
+   * First persistent proof: do this before SerialInit, GOP, HDA, HII and
+   * filesystem access.  If FAT writes fail or an early hardware probe faults,
+   * the firmware variable can still prove that UefiMain was entered.
+   */
+  NvramStatus = SaveNvramStage (SystemTable, "ENTRY", NULL);
+
   SerialInit ();
   WriteText ("OMNI_BOOT_OK\n");
+  WriteText (EFI_ERROR (NvramStatus) ? "OMNI_NVRAM_ENTRY_FAIL\n" : "OMNI_NVRAM_ENTRY_PASS\n");
   SaveTraceStage (ImageHandle, SystemTable, "BOOT_START");
 
   ChallengeStatus = LoadChallenge (ImageHandle, SystemTable, Challenge);
@@ -1476,6 +1550,9 @@ UefiMain (
     WriteText ("OMNI_CHALLENGE=");
     WriteText (Challenge);
     WriteText ("\n");
+
+    NvramStatus = SaveNvramStage (SystemTable, "CHALLENGE_BOUND", Challenge);
+    WriteText (EFI_ERROR (NvramStatus) ? "OMNI_NVRAM_BIND_FAIL\n" : "OMNI_NVRAM_BIND_PASS\n");
   }
 
   PlatformStatus = LoadPlatformUuid (SystemTable, PlatformUuid);
@@ -1527,6 +1604,10 @@ UefiMain (
   WriteText (Passed ? "OMNI_UEFI_PASS\n" : "OMNI_UEFI_FAIL\n");
 
   SaveTraceStage (ImageHandle, SystemTable, "CORE_EVIDENCE_SAVED");
+  if (!EFI_ERROR (ChallengeStatus)) {
+    NvramStatus = SaveNvramStage (SystemTable, "CORE_EVIDENCE_SAVED", Challenge);
+    WriteText (EFI_ERROR (NvramStatus) ? "OMNI_NVRAM_CORE_FAIL\n" : "OMNI_NVRAM_CORE_PASS\n");
+  }
 
   SaveTraceStage (ImageHandle, SystemTable, "BEFORE_GOP");
   GopStatus = ProbeGop (SystemTable, &Gop);
@@ -1586,6 +1667,15 @@ UefiMain (
     SystemTable,
     EFI_ERROR (DiagStatus) ? "DIAG_WRITE_FAIL" : "COMPLETE"
     );
+
+  if (!EFI_ERROR (ChallengeStatus)) {
+    NvramStatus = SaveNvramStage (
+                    SystemTable,
+                    EFI_ERROR (DiagStatus) ? "DIAG_WRITE_FAIL" : "COMPLETE",
+                    Challenge
+                    );
+    WriteText (EFI_ERROR (NvramStatus) ? "OMNI_NVRAM_FINAL_FAIL\n" : "OMNI_NVRAM_FINAL_PASS\n");
+  }
 
   if ((SystemTable != NULL) && (SystemTable->ConOut != NULL)) {
     SystemTable->ConOut->OutputString (
