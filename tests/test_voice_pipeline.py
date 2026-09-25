@@ -1,8 +1,10 @@
+from pathlib import Path
 import unittest
 
 from omni.voice_frontend import Language
-from omni.voice_phonemes import PhonemeId, validate_frontend_stream
-from omni.voice_pipeline import MAX_TEXT_CHARS, compile_speech_stream
+from omni.voice_phonemes import FRONTEND_STREAM_VERSION, PhonemeId, validate_frontend_stream
+from omni.voice_pipeline import MAX_STREAM_BYTES, MAX_TEXT_CHARS, compile_speech_stream
+from omni.voice_quality import PCM_ALLOWED_CHANNELS, PCM_SAMPLE_RATE
 
 
 class VoicePipelineTests(unittest.TestCase):
@@ -32,6 +34,18 @@ class VoicePipelineTests(unittest.TestCase):
     def test_firmware_input_is_bounded(self):
         with self.assertRaises(ValueError):
             compile_speech_stream("a" * (MAX_TEXT_CHARS + 1), "fr")
+
+    def test_c_header_matches_python_voice_contract(self):
+        header = Path("include/omni_voice_frontend.h").read_text(encoding="utf-8")
+        expected = {
+            "OMNI_VOICE_FRONTEND_STREAM_VERSION": FRONTEND_STREAM_VERSION,
+            "OMNI_VOICE_MAX_TEXT_CHARS": MAX_TEXT_CHARS,
+            "OMNI_VOICE_MAX_STREAM_BYTES": MAX_STREAM_BYTES,
+            "OMNI_VOICE_PCM_SAMPLE_RATE": PCM_SAMPLE_RATE,
+            "OMNI_VOICE_PCM_MAX_CHANNELS": max(PCM_ALLOWED_CHANNELS),
+        }
+        for name, value in expected.items():
+            self.assertIn(f"#define {name} UINT32_C({value})", header)
 
 
 if __name__ == "__main__":
