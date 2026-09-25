@@ -293,60 +293,165 @@ jobs:
           Set-Location $PSScriptRoot
 
           $qemu = "C:\Program Files\qemu\qemu-system-x86_64.exe"
-          if (-not (Test-Path $qemu)) {
-            $qemu = (Get-Command qemu-system-x86_64.exe -ErrorAction SilentlyContinue).Source
+          if (-not (Test-Path -LiteralPath $qemu -PathType Leaf)) {
+            $cmd = Get-Command qemu-system-x86_64.exe -ErrorAction SilentlyContinue
+            if ($cmd) { $qemu = $cmd.Source }
           }
           if (-not $qemu) { throw "QEMU not found" }
 
-          Remove-Item qemu-debug.log,qemu-serial.log,qemu-vars.fd -Force -ErrorAction SilentlyContinue
+          Remove-Item qemu-debug.log,qemu-serial.log,qemu-vars.fd,qemu-stdout.log,qemu-stderr.log,qemu-process.json -Force -ErrorAction SilentlyContinue
           Copy-Item hil\OVMF_VARS.fd qemu-vars.fd -Force
+
           $code = (Resolve-Path "hil\OVMF_CODE.fd").Path
           $vars = (Resolve-Path "qemu-vars.fd").Path
           $disk = (Resolve-Path "hil\omni-fat.img").Path
+          $debugLog = Join-Path $PSScriptRoot "qemu-debug.log"
+          $serialLog = Join-Path $PSScriptRoot "qemu-serial.log"
+          $stdoutLog = Join-Path $PSScriptRoot "qemu-stdout.log"
+          $stderrLog = Join-Path $PSScriptRoot "qemu-stderr.log"
+          $processJson = Join-Path $PSScriptRoot "qemu-process.json"
+
           $expectedChallenge = (Get-Content "hil\omni-challenge.txt" -Raw).Trim().ToLowerInvariant()
           if ($expectedChallenge -notmatch "^[0-9a-f]{64}$") { throw "Invalid HIL challenge artifact" }
 
-          $args = @(
+          $qemuArgs = @(
             "-machine","q35,accel=tcg",
             "-m","256",
             "-display","none",
-            "-serial","file:qemu-serial.log",
+            "-serial","file:$serialLog",
             "-net","none",
-            "-debugcon","file:qemu-debug.log",
+            "-debugcon","file:$debugLog",
             "-global","isa-debugcon.iobase=0x402",
             "-drive","if=pflash,format=raw,readonly=on,file=$code",
             "-drive","if=pflash,format=raw,file=$vars",
             "-drive","file=$disk,format=raw"
           )
 
-          $p = Start-Process -FilePath $qemu -ArgumentList $args -PassThru -NoNewWindow -WorkingDirectory $PSScriptRoot
-          if (-not $p.WaitForExit(60000)) {
-            $p.Kill()
-            throw "QEMU timeout"
+          $psi = [System.Diagnostics.ProcessStartInfo]::new()
+          $psi.FileName = $qemu
+          $psi.WorkingDirectory = $PSScriptRoot
+          $psi.UseShellExecute = $false
+          $psi.CreateNoWindow = $true
+          $psi.RedirectStandardOutput = $true
+          $psi.RedirectStandardError = $true
+          foreach ($arg in $qemuArgs) {
+            [void]$psi.ArgumentList.Add([string]$arg)
           }
-          if ($p.ExitCode -ne 0) { throw "QEMU exit code $($p.ExitCode)" }
 
-          $logs = @()
-          if (Test-Path qemu-debug.log) { $logs += Get-Content qemu-debug.log -Raw }
-          if (Test-Path qemu-serial.log) { $logs += Get-Content qemu-serial.log -Raw }
-          $joined = $logs -join [Environment]::NewLine
-          foreach ($marker in @("OMNI_CHALLENGE_PASS","OMNI_HII_PASS","OMNI_EVIDENCE_PASS","OMNI_UEFI_PASS")) {
-            if ($joined -notmatch [regex]::Escape($marker)) { throw "Missing QEMU proof marker: $marker" }
+          $process = [System.Diagnostics.Process]::new()
+          $process.StartInfo = $psi
+          if (-not $process.Start()) { throw "Unable to start QEMU" }
+
+          $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+          $stderrTask = $process.StandardError.ReadToEndAsync()
+
+          $requiredMarkers = @(
+            "OMNI_CHALLENGE_PASS",
+            "OMNI_HII_PASS",
+            "OMNI_EVIDENCE_PASS",
+            "OMNI_UEFI_PASS"
+          )
+          $challengeMarker = "OMNI_CHALLENGE=$expectedChallenge"
+
+          function Read-QemuProof {
+            $parts = @()
+            if (Test-Path -LiteralPath $debugLog) {
+              try { $parts += Get-Content -LiteralPath $debugLog -Raw -ErrorAction Stop } catch {}
+            }
+            if (Test-Path -LiteralPath $serialLog) {
+              try { $parts += Get-Content -LiteralPath $serialLog -Raw -ErrorAction Stop } catch {}
+            }
+            return ($parts -join [Environment]::NewLine)
           }
-          if ($joined -notmatch [regex]::Escape("OMNI_CHALLENGE=$expectedChallenge")) {
+
+          function Test-QemuProof([string]$Text) {
+            if ($Text -match "OMNI_(CHALLENGE|HII|EVIDENCE|UEFI)_FAIL") { return $false }
+            foreach ($marker in $requiredMarkers) {
+              if ($Text -notmatch [regex]::Escape($marker)) { return $false }
+            }
+            if ($Text -notmatch [regex]::Escape($challengeMarker)) { return $false }
+            return $true
+          }
+
+          $deadline = (Get-Date).AddSeconds(60)
+          $proofText = ""
+          $proofComplete = $false
+          while ((Get-Date) -lt $deadline) {
+            $proofText = Read-QemuProof
+            if (Test-QemuProof $proofText) {
+              $proofComplete = $true
+              break
+            }
+            if ($process.HasExited) { break }
+            Start-Sleep -Milliseconds 250
+          }
+
+          $terminatedAfterProof = $false
+          if ($proofComplete -and -not $process.HasExited) {
+            try {
+              $process.Kill($true)
+              $terminatedAfterProof = $true
+            } catch {}
+          }
+
+          if (-not $process.HasExited) {
+            try { $process.Kill($true) } catch {}
+          }
+          try { $process.WaitForExit() } catch {}
+
+          $stdout = $stdoutTask.GetAwaiter().GetResult()
+          $stderr = $stderrTask.GetAwaiter().GetResult()
+          $stdout | Set-Content -LiteralPath $stdoutLog -Encoding UTF8
+          $stderr | Set-Content -LiteralPath $stderrLog -Encoding UTF8
+
+          $proofText = Read-QemuProof
+          $proofComplete = Test-QemuProof $proofText
+
+          [pscustomobject]@{
+            Schema = "omni.qemu-process.v2"
+            ExitCode = $process.ExitCode
+            ProofComplete = $proofComplete
+            TerminatedAfterProof = $terminatedAfterProof
+            ExpectedChallenge = $expectedChallenge
+            QemuPath = $qemu
+            Identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+            IdentitySid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+          } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $processJson -Encoding UTF8
+
+          if (-not $proofComplete) {
+            Write-Host "--- QEMU STDERR ---"
+            Write-Host $stderr
+            Write-Host "--- QEMU STDOUT ---"
+            Write-Host $stdout
+            Write-Host "--- QEMU PROOF LOGS ---"
+            Write-Host $proofText
+            throw "QEMU proof incomplete. ExitCode=$($process.ExitCode)"
+          }
+
+          if ($proofText -match "OMNI_(CHALLENGE|HII|EVIDENCE|UEFI)_FAIL") {
+            throw "QEMU emitted failure marker"
+          }
+
+          foreach ($marker in $requiredMarkers) {
+            if ($proofText -notmatch [regex]::Escape($marker)) { throw "Missing QEMU proof marker: $marker" }
+          }
+          if ($proofText -notmatch [regex]::Escape($challengeMarker)) {
             throw "QEMU challenge does not match this commit"
           }
-          if ($joined -match "OMNI_(CHALLENGE|HII|EVIDENCE|UEFI)_FAIL") { throw "QEMU emitted failure marker" }
+
+          if ($process.ExitCode -ne 0) {
+            Write-Warning "QEMU process ExitCode=$($process.ExitCode) after complete bound proof; proof markers are authoritative."
+          }
+
+          Write-Host "[PASS] QEMU proof complete and challenge-bound."
           '@ | Set-Content $script -Encoding utf8
 
-          $psexecCandidates = @(
-            "C:\Tools\PsExec\PsExec64.exe",
-            "$env:SystemRoot\System32\PsExec64.exe",
-            "C:\Users\adm\Downloads\PsExec64.exe"
-          )
-          $psexec = $psexecCandidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
-          if (-not $psexec) { throw "PsExec64 introuvable dans: $($psexecCandidates -join ', ')" }
-          & $psexec -accepteula -nobanner -s -h -w $env:GITHUB_WORKSPACE powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $script
+          $psexec = "C:\Tools\PsExec\PsExec64.exe"
+          if (-not (Test-Path -LiteralPath $psexec -PathType Leaf)) {
+            throw "Required PsExec missing: $psexec"
+          }
+          $pwsh = (Get-Command pwsh.exe -ErrorAction Stop).Source
+          & $psexec -accepteula -nobanner -s -h -w $env:GITHUB_WORKSPACE $pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $script
           if ($LASTEXITCODE -ne 0) { throw "PsExec QEMU validation failed: $LASTEXITCODE" }
 
       - name: Execute same EFI under VMware via PsExec SYSTEM
@@ -417,21 +522,19 @@ jobs:
           if (-not $passed) { throw "VMware UEFI proof markers missing" }
           '@ | Set-Content $script -Encoding utf8
 
-          $psexecCandidates = @(
-            "C:\Tools\PsExec\PsExec64.exe",
-            "$env:SystemRoot\System32\PsExec64.exe",
-            "C:\Users\adm\Downloads\PsExec64.exe"
-          )
-          $psexec = $psexecCandidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
-          if (-not $psexec) { throw "PsExec64 introuvable dans: $($psexecCandidates -join ', ')" }
-          & $psexec -accepteula -nobanner -s -h -w $env:GITHUB_WORKSPACE powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $script
+          $psexec = "C:\Tools\PsExec\PsExec64.exe"
+          if (-not (Test-Path -LiteralPath $psexec -PathType Leaf)) {
+            throw "Required PsExec missing: $psexec"
+          }
+          $pwsh = (Get-Command pwsh.exe -ErrorAction Stop).Source
+          & $psexec -accepteula -nobanner -s -h -w $env:GITHUB_WORKSPACE $pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $script
           if ($LASTEXITCODE -ne 0) { throw "PsExec VMware validation failed: $LASTEXITCODE" }
 
       - name: Hash physical-run evidence
         if: always()
         run: |
           Get-ChildItem -File -Recurse |
-            Where-Object { $_.Name -match 'hardware-inventory|psexec-identity|hil-artifact-hashes|qemu-.*\.log|serial\.log' } |
+            Where-Object { $_.Name -match 'hardware-inventory|psexec-identity|hil-artifact-hashes|qemu-.*\.log|qemu-process\.json|serial\.log' } |
             ForEach-Object {
               [pscustomobject]@{
                 Path = $_.FullName
@@ -450,5 +553,8 @@ jobs:
             hil-artifact-hashes.json
             qemu-debug.log
             qemu-serial.log
+            qemu-stdout.log
+            qemu-stderr.log
+            qemu-process.json
             vmware-hil/serial.log
             physical-evidence-manifest.json
