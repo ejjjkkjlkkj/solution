@@ -46,6 +46,54 @@ They are not accepted as the target renderer merely because they are small or
 deterministic. The target renderer must pass the perceptual gates without adding an
 OS speech API or external screen reader dependency.
 
+## Evidence manifest
+
+Release evidence is fail-closed and bound to one exact Git commit. The accepted schema is
+`omniexec.voice-release-evidence.v1`:
+
+```json
+{
+  "schema": "omniexec.voice-release-evidence.v1",
+  "head_sha": "0123456789abcdef0123456789abcdef01234567",
+  "gates": {
+    "semantic_frontend": {
+      "status": "PASS",
+      "kind": "ci",
+      "evidence_ref": "github-actions://run/123/job/456"
+    },
+    "french_intelligibility": {
+      "status": "PASS",
+      "kind": "human-listening",
+      "evidence_ref": "lab://voice/fr/session-2026-09-25"
+    },
+    "physical_hda_audio": {
+      "status": "PASS",
+      "kind": "hardware-measurement",
+      "evidence_ref": "lab://asus-m1603qa/hda/run-42"
+    },
+    "physical_speaker_intelligibility": {
+      "status": "PASS",
+      "kind": "human-physical-listening",
+      "evidence_ref": "lab://asus-m1603qa/listening/session-42"
+    }
+  }
+}
+```
+
+The example is intentionally incomplete. All required gates must be present.
+
+A legacy flat object such as `{"semantic_frontend": "PASS"}` is rejected. A PASS gate
+without a non-empty evidence reference is rejected. Evidence kinds are gate-specific:
+CI cannot certify French naturalness or physical-speaker intelligibility, and a human
+listening note cannot replace a physical HDA measurement.
+
+When the expected commit is known, bind the check explicitly:
+
+```text
+omni voice-release evidence.json --expected-head <40-character-git-sha>
+```
+
+A head mismatch remains a blocker even if every individual gate says PASS.
 
 ## Bounded interruptible PCM queue
 
