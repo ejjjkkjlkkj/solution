@@ -52,6 +52,16 @@ typedef struct {
   UINTN Gctl;
   UINTN Vmaj;
   UINTN Vmin;
+  UINTN ImmediateCommands;
+  UINTN CodecAddress;
+  UINTN CodecVendorId;
+  UINTN RootStartNode;
+  UINTN RootNodeCount;
+  UINTN AudioFunctionGroup;
+  UINTN WidgetStartNode;
+  UINTN WidgetCount;
+  UINTN OutputConverters;
+  UINTN PinWidgets;
 } OMNI_HDA_STATS;
 
 STATIC VOID SerialInit (VOID) {
@@ -602,6 +612,160 @@ STATIC EFI_STATUS ProbeGop (
   return FirstError;
 }
 
+STATIC UINT32 HdaVerb (
+  UINTN Codec,
+  UINTN Node,
+  UINTN Verb,
+  UINTN Payload
+  )
+{
+  return (UINT32)(
+           ((Codec & 0x0F) << 28) |
+           ((Node & 0xFF) << 20) |
+           ((Verb & 0x0FFF) << 8) |
+           (Payload & 0xFF)
+           );
+}
+
+STATIC EFI_STATUS HdaImmediateCommand (
+  EFI_PCI_IO_PROTOCOL *PciIo,
+  UINT32              Command,
+  OUT UINT32          *Response
+  )
+{
+  EFI_STATUS Status;
+  UINTN Spin;
+  UINT16 Icis;
+  UINT32 Value;
+
+  if ((PciIo == NULL) || (Response == NULL)) {
+    return EFI_INVALID_PARAMETER;
+  }
+
+  for (Spin = 0; Spin < 100000; ++Spin) {
+    Icis = 0;
+    Status = PciIo->Mem.Read (PciIo, EfiPciIoWidthUint16, 0, 0x68, 1, &Icis);
+    if (EFI_ERROR (Status)) return Status;
+    if ((Icis & 0x0001) == 0) break;
+  }
+  if (Spin == 100000) return EFI_TIMEOUT;
+
+  Icis = 0x0002;
+  Status = PciIo->Mem.Write (PciIo, EfiPciIoWidthUint16, 0, 0x68, 1, &Icis);
+  if (EFI_ERROR (Status)) return Status;
+
+  Value = Command;
+  Status = PciIo->Mem.Write (PciIo, EfiPciIoWidthUint32, 0, 0x60, 1, &Value);
+  if (EFI_ERROR (Status)) return Status;
+
+  Icis = 0x0001;
+  Status = PciIo->Mem.Write (PciIo, EfiPciIoWidthUint16, 0, 0x68, 1, &Icis);
+  if (EFI_ERROR (Status)) return Status;
+
+  for (Spin = 0; Spin < 200000; ++Spin) {
+    Icis = 0;
+    Status = PciIo->Mem.Read (PciIo, EfiPciIoWidthUint16, 0, 0x68, 1, &Icis);
+    if (EFI_ERROR (Status)) return Status;
+    if (((Icis & 0x0001) == 0) && ((Icis & 0x0002) != 0)) break;
+  }
+  if (Spin == 200000) return EFI_TIMEOUT;
+
+  Value = 0;
+  Status = PciIo->Mem.Read (PciIo, EfiPciIoWidthUint32, 0, 0x64, 1, &Value);
+  if (EFI_ERROR (Status)) return Status;
+  *Response = Value;
+
+  Icis = 0x0002;
+  PciIo->Mem.Write (PciIo, EfiPciIoWidthUint16, 0, 0x68, 1, &Icis);
+  return EFI_SUCCESS;
+}
+
+STATIC EFI_STATUS HdaGetParameter (
+  EFI_PCI_IO_PROTOCOL *PciIo,
+  UINTN               Codec,
+  UINTN               Node,
+  UINTN               Parameter,
+  OUT UINT32           *Response
+  )
+{
+  return HdaImmediateCommand (
+           PciIo,
+           HdaVerb (Codec, Node, 0xF00, Parameter),
+           Response
+           );
+}
+
+STATIC VOID ProbeHdaCodecTopology (
+  EFI_PCI_IO_PROTOCOL *PciIo,
+  IN OUT OMNI_HDA_STATS *Stats
+  )
+{
+  UINTN Codec;
+  UINT32 Response;
+  UINTN StartNode;
+  UINTN NodeCount;
+  UINTN Index;
+
+  if ((PciIo == NULL) || (Stats == NULL) || (Stats->CodecBitmap == 0)) return;
+
+  for (Codec = 0; Codec < 15; ++Codec) {
+    if ((Stats->CodecBitmap & (1U << Codec)) != 0) {
+      Stats->CodecAddress = Codec;
+      break;
+    }
+  }
+  if (Codec == 15) return;
+
+  if (!EFI_ERROR (HdaGetParameter (PciIo, Codec, 0, 0x00, &Response))) {
+    Stats->ImmediateCommands++;
+    Stats->CodecVendorId = Response;
+  }
+  if (EFI_ERROR (HdaGetParameter (PciIo, Codec, 0, 0x04, &Response))) return;
+  Stats->ImmediateCommands++;
+  StartNode = (Response >> 16) & 0xFF;
+  NodeCount = Response & 0xFF;
+  Stats->RootStartNode = StartNode;
+  Stats->RootNodeCount = NodeCount;
+
+  for (Index = 0; Index < NodeCount; ++Index) {
+    UINTN Node;
+    Node = StartNode + Index;
+    if (EFI_ERROR (HdaGetParameter (PciIo, Codec, Node, 0x05, &Response))) continue;
+    Stats->ImmediateCommands++;
+    if ((Response & 0xFF) == 0x01) {
+      Stats->AudioFunctionGroup = Node;
+      break;
+    }
+  }
+  if (Stats->AudioFunctionGroup == 0) return;
+
+  if (EFI_ERROR (HdaGetParameter (
+                   PciIo,
+                   Codec,
+                   Stats->AudioFunctionGroup,
+                   0x04,
+                   &Response
+                   ))) {
+    return;
+  }
+  Stats->ImmediateCommands++;
+  StartNode = (Response >> 16) & 0xFF;
+  NodeCount = Response & 0xFF;
+  Stats->WidgetStartNode = StartNode;
+  Stats->WidgetCount = NodeCount;
+
+  for (Index = 0; Index < NodeCount; ++Index) {
+    UINTN Node;
+    UINTN WidgetType;
+    Node = StartNode + Index;
+    if (EFI_ERROR (HdaGetParameter (PciIo, Codec, Node, 0x09, &Response))) continue;
+    Stats->ImmediateCommands++;
+    WidgetType = (Response >> 20) & 0x0F;
+    if (WidgetType == 0x00) Stats->OutputConverters++;
+    if (WidgetType == 0x04) Stats->PinWidgets++;
+  }
+}
+
 STATIC EFI_STATUS ProbeHda (
   EFI_SYSTEM_TABLE *SystemTable,
   OUT OMNI_HDA_STATS *Stats
@@ -708,11 +872,98 @@ STATIC EFI_STATUS ProbeHda (
       if (!EFI_ERROR (PciIo->Mem.Read (PciIo, EfiPciIoWidthUint16, 0, 0x0E, 1, &StateSts))) {
         Stats->CodecBitmap = StateSts & 0x7FFF; Stats->MmioReads++;
       }
+      ProbeHdaCodecTopology (PciIo, Stats);
     }
   }
 
   SystemTable->BootServices->FreePool (Handles);
   return (Stats->Controllers != 0) ? EFI_SUCCESS : EFI_NOT_FOUND;
+}
+
+STATIC EFI_STATUS ProbeKeyboardNavigation (
+  EFI_SYSTEM_TABLE *SystemTable,
+  OUT BOOLEAN       *KeyboardPassed,
+  OUT BOOLEAN       *NavigationPassed
+  )
+{
+  EFI_STATUS Status;
+  EFI_INPUT_KEY Key;
+  UINTN Tick;
+  BOOLEAN SawAny;
+  BOOLEAN SawDown;
+
+  if ((SystemTable == NULL) || (SystemTable->BootServices == NULL) ||
+      (SystemTable->ConIn == NULL) || (KeyboardPassed == NULL) ||
+      (NavigationPassed == NULL)) {
+    return EFI_INVALID_PARAMETER;
+  }
+
+  *KeyboardPassed = FALSE;
+  *NavigationPassed = FALSE;
+  SawAny = FALSE;
+  SawDown = FALSE;
+
+  SystemTable->ConIn->Reset (SystemTable->ConIn, FALSE);
+  if (SystemTable->ConOut != NULL) {
+    SystemTable->ConOut->OutputString (
+                           SystemTable->ConOut,
+                           L"INPUT TEST: press DOWN ARROW then ENTER within 30 seconds.\r\n"
+                           );
+  }
+  WriteText ("OMNI_KEYBOARD_WAIT\n");
+
+  for (Tick = 0; Tick < 300; ++Tick) {
+    Key.ScanCode = 0;
+    Key.UnicodeChar = 0;
+    Status = SystemTable->ConIn->ReadKeyStroke (SystemTable->ConIn, &Key);
+    if (Status == EFI_NOT_READY) {
+      SystemTable->BootServices->Stall (100000);
+      continue;
+    }
+    if (EFI_ERROR (Status)) {
+      WriteText ("OMNI_KEYBOARD_READ_ERROR\n");
+      return Status;
+    }
+
+    SawAny = TRUE;
+    *KeyboardPassed = TRUE;
+    WriteStat ("OMNI_KEY_SCAN", Key.ScanCode);
+    WriteStat ("OMNI_KEY_UNICODE", Key.UnicodeChar);
+
+    if (Key.ScanCode == SCAN_DOWN) {
+      SawDown = TRUE;
+      if (SystemTable->ConOut != NULL) {
+        SystemTable->ConOut->OutputString (
+                               SystemTable->ConOut,
+                               L"DOWN received. Press ENTER.\r\n"
+                               );
+      }
+      WriteText ("OMNI_NAVIGATION_DOWN_RECEIVED\n");
+      continue;
+    }
+
+    if (SawDown && (Key.UnicodeChar == CHAR_CARRIAGE_RETURN)) {
+      *NavigationPassed = TRUE;
+      WriteText ("OMNI_KEYBOARD_PASS\n");
+      WriteText ("OMNI_NAVIGATION_INPUT_PASS\n");
+      if (SystemTable->ConOut != NULL) {
+        SystemTable->ConOut->OutputString (
+                               SystemTable->ConOut,
+                               L"KEYBOARD: PASS\r\nNAVIGATION INPUT: PASS\r\n"
+                               );
+      }
+      return EFI_SUCCESS;
+    }
+  }
+
+  if (SawAny) {
+    WriteText ("OMNI_KEYBOARD_PASS\n");
+    WriteText ("OMNI_NAVIGATION_INPUT_INCOMPLETE\n");
+    return EFI_TIMEOUT;
+  }
+
+  WriteText ("OMNI_KEYBOARD_TIMEOUT\n");
+  return EFI_TIMEOUT;
 }
 
 STATIC EFI_STATUS SaveDiag (
@@ -722,7 +973,10 @@ STATIC EFI_STATUS SaveDiag (
   CONST OMNI_GOP_STATS *Gop,
   EFI_STATUS           GopStatus,
   CONST OMNI_HDA_STATS *Hda,
-  EFI_STATUS           HdaStatus
+  EFI_STATUS           HdaStatus,
+  EFI_STATUS           KeyboardStatus,
+  BOOLEAN              KeyboardPassed,
+  BOOLEAN              NavigationPassed
   )
 {
   EFI_STATUS Status;
@@ -801,6 +1055,19 @@ STATIC EFI_STATUS SaveDiag (
   if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_GCTL", Hda->Gctl);
   if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_VMAJ", Hda->Vmaj);
   if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_VMIN", Hda->Vmin);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_IMMEDIATE_COMMANDS", Hda->ImmediateCommands);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_CODEC_ADDRESS", Hda->CodecAddress);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_CODEC_VENDOR_ID", Hda->CodecVendorId);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_ROOT_START_NODE", Hda->RootStartNode);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_ROOT_NODE_COUNT", Hda->RootNodeCount);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_AUDIO_FUNCTION_GROUP", Hda->AudioFunctionGroup);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_WIDGET_START_NODE", Hda->WidgetStartNode);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_WIDGET_COUNT", Hda->WidgetCount);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_OUTPUT_CONVERTERS", Hda->OutputConverters);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_PIN_WIDGETS", Hda->PinWidgets);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_KEYBOARD_STATUS", (UINTN)KeyboardStatus);
+  if (!EFI_ERROR (Status)) Status = FileWriteAscii (File, KeyboardPassed ? "OMNI_KEYBOARD_PASS\n" : "OMNI_KEYBOARD_UNPROVEN\n");
+  if (!EFI_ERROR (Status)) Status = FileWriteAscii (File, NavigationPassed ? "OMNI_NAVIGATION_INPUT_PASS\n" : "OMNI_NAVIGATION_INPUT_UNPROVEN\n");
   if (!EFI_ERROR (Status)) Status = FileWriteAscii (File, "OMNI_DIAG_PASS\n");
   if (!EFI_ERROR (Status)) Status = File->Flush (File);
 
@@ -824,8 +1091,8 @@ STATIC VOID ShowPhysicalScreen (
   SystemTable->ConOut->OutputString (SystemTable->ConOut, Passed ? L"CORE EVIDENCE: PASS\r\n" : L"CORE EVIDENCE: FAIL\r\n");
   SystemTable->ConOut->OutputString (SystemTable->ConOut, (Gop->BltPass != 0) ? L"GOP BLT: PASS\r\n" : L"GOP BLT: NOT PROVEN\r\n");
   SystemTable->ConOut->OutputString (SystemTable->ConOut, (Hda->Controllers != 0) ? L"HDA CONTROLLER: FOUND\r\n" : L"HDA CONTROLLER: NOT FOUND\r\n");
-  SystemTable->ConOut->OutputString (SystemTable->ConOut, L"Diagnostic saved to OMNI-DIAG.TXT\r\n");
-  SystemTable->ConOut->OutputString (SystemTable->ConOut, L"Returning to firmware in 12 seconds...\r\n");
+  SystemTable->ConOut->OutputString (SystemTable->ConOut, L"Physical input validation follows.\r\n");
+  SystemTable->ConOut->OutputString (SystemTable->ConOut, L"Press DOWN ARROW then ENTER.\r\n");
 }
 
 STATIC EFI_STATUS SaveEvidence (
@@ -1182,14 +1449,20 @@ UefiMain (
   EFI_STATUS EvidenceStatus;
   EFI_STATUS GopStatus;
   EFI_STATUS HdaStatus;
+  EFI_STATUS KeyboardStatus;
   EFI_STATUS DiagStatus;
   BOOLEAN HiiPassed;
   BOOLEAN Passed;
+  BOOLEAN KeyboardPassed;
+  BOOLEAN NavigationPassed;
   CHAR8 Challenge[OMNI_CHALLENGE_HEX_LEN + 1] = {0};
   CHAR8 PlatformUuid[OMNI_UUID_TEXT_LEN + 1] = {0};
   OMNI_HII_STATS Stats = {0};
   OMNI_GOP_STATS Gop = {0};
   OMNI_HDA_STATS Hda = {0};
+
+  KeyboardPassed = FALSE;
+  NavigationPassed = FALSE;
 
   SerialInit ();
   WriteText ("OMNI_BOOT_OK\n");
@@ -1275,8 +1548,25 @@ UefiMain (
   WriteStat ("OMNI_HDA_CODEC_BITMAP", Hda.CodecBitmap);
   WriteStat ("OMNI_HDA_VENDOR_ID", Hda.VendorId);
   WriteStat ("OMNI_HDA_DEVICE_ID", Hda.DeviceId);
+  WriteStat ("OMNI_HDA_IMMEDIATE_COMMANDS", Hda.ImmediateCommands);
+  WriteStat ("OMNI_HDA_CODEC_ADDRESS", Hda.CodecAddress);
+  WriteStat ("OMNI_HDA_CODEC_VENDOR_ID", Hda.CodecVendorId);
+  WriteStat ("OMNI_HDA_AUDIO_FUNCTION_GROUP", Hda.AudioFunctionGroup);
+  WriteStat ("OMNI_HDA_WIDGET_START_NODE", Hda.WidgetStartNode);
+  WriteStat ("OMNI_HDA_WIDGET_COUNT", Hda.WidgetCount);
+  WriteStat ("OMNI_HDA_OUTPUT_CONVERTERS", Hda.OutputConverters);
+  WriteStat ("OMNI_HDA_PIN_WIDGETS", Hda.PinWidgets);
   WriteText (EFI_ERROR (HdaStatus) ? "OMNI_HDA_PROBE_MISS\n" : "OMNI_HDA_PROBE_PASS\n");
   SaveTraceStage (ImageHandle, SystemTable, "AFTER_HDA");
+
+  ShowPhysicalScreen (SystemTable, &Gop, &Hda, Passed);
+  SaveTraceStage (ImageHandle, SystemTable, "BEFORE_INPUT");
+  KeyboardStatus = ProbeKeyboardNavigation (
+                     SystemTable,
+                     &KeyboardPassed,
+                     &NavigationPassed
+                     );
+  SaveTraceStage (ImageHandle, SystemTable, "AFTER_INPUT");
 
   DiagStatus = SaveDiag (
                  ImageHandle,
@@ -1285,7 +1575,10 @@ UefiMain (
                  &Gop,
                  GopStatus,
                  &Hda,
-                 HdaStatus
+                 HdaStatus,
+                 KeyboardStatus,
+                 KeyboardPassed,
+                 NavigationPassed
                  );
   WriteText (EFI_ERROR (DiagStatus) ? "OMNI_DIAG_FAIL\n" : "OMNI_DIAG_PASS\n");
   SaveTraceStage (
@@ -1294,9 +1587,19 @@ UefiMain (
     EFI_ERROR (DiagStatus) ? "DIAG_WRITE_FAIL" : "COMPLETE"
     );
 
-  ShowPhysicalScreen (SystemTable, &Gop, &Hda, Passed);
+  if ((SystemTable != NULL) && (SystemTable->ConOut != NULL)) {
+    SystemTable->ConOut->OutputString (
+                           SystemTable->ConOut,
+                           KeyboardPassed ? L"KEYBOARD EVIDENCE: PASS\r\n" : L"KEYBOARD EVIDENCE: UNPROVEN\r\n"
+                           );
+    SystemTable->ConOut->OutputString (
+                           SystemTable->ConOut,
+                           NavigationPassed ? L"NAVIGATION INPUT: PASS\r\n" : L"NAVIGATION INPUT: UNPROVEN\r\n"
+                           );
+    SystemTable->ConOut->OutputString (SystemTable->ConOut, L"Returning to firmware in 3 seconds...\r\n");
+  }
   if ((SystemTable != NULL) && (SystemTable->BootServices != NULL)) {
-    SystemTable->BootServices->Stall (12000000);
+    SystemTable->BootServices->Stall (3000000);
   }
 
   WriteText ("OMNI_RETURN_TO_FIRMWARE\n");
