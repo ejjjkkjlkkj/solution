@@ -22,12 +22,20 @@ class VoiceQualityTests(unittest.TestCase):
     def test_large_dc_offset_is_rejected(self):
         report = inspect_pcm16le(pcm16([2000, 2100, 1900, 2000] * 64))
         self.assertFalse(report.clean)
-        self.assertIn("dc-offset", report.violations)
+        self.assertIn("dc-offset-channel-0", report.violations)
+
+    def test_opposite_stereo_dc_cannot_cancel_out(self):
+        frames = [sample for _ in range(128) for sample in (2000, -2000)]
+        report = inspect_pcm16le(pcm16(frames), channels=2)
+        self.assertFalse(report.clean)
+        self.assertEqual(report.channel_dc_offsets, (2000, -2000))
+        self.assertIn("dc-offset-channel-0", report.violations)
+        self.assertIn("dc-offset-channel-1", report.violations)
 
     def test_silence_is_rejected(self):
         report = inspect_pcm16le(pcm16([0] * 256))
         self.assertFalse(report.clean)
-        self.assertIn("silence-or-near-silence", report.violations)
+        self.assertIn("silence-or-near-silence-channel-0", report.violations)
 
     def test_frame_alignment_is_mandatory(self):
         with self.assertRaises(ValueError):
