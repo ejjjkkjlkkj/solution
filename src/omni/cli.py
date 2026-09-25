@@ -68,7 +68,7 @@ def main() -> int:
         return 0
     if args.command == "voice-compile":
         stream = voice_pipeline.compile_speech_stream(args.text, args.lang)
-        print(json.dumps({"version": 1, "bytes": list(stream)}, indent=2))
+        print(json.dumps({"version": voice_pipeline.FRONTEND_STREAM_VERSION, "bytes": list(stream)}, indent=2))
         return 0
     if args.command == "voice-pcm-check":
         report = voice_quality.inspect_pcm16le(
