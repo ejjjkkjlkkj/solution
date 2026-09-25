@@ -176,12 +176,12 @@ jobs:
           }
 
           $psexecCandidates = @(
-  "$env:SystemRoot\System32\PsExec64.exe",
-  "C:\Tools\PsExec\PsExec64.exe",
-  "C:\Users\adm\Downloads\PsExec64.exe"
-)
-$psexec = $psexecCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
-if (-not $psexec) { throw "PsExec64 introuvable dans: $($psexecCandidates -join ', ')" }
+            "C:\Tools\PsExec\PsExec64.exe",
+            "$env:SystemRoot\System32\PsExec64.exe",
+            "C:\Users\adm\Downloads\PsExec64.exe"
+          )
+          $psexec = $psexecCandidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+          if (-not $psexec) { throw "PsExec64 introuvable dans: $($psexecCandidates -join ', ')" }
           if (-not (Test-Path $psexec -PathType Leaf)) { throw "PsExec64 missing: $psexec" }
           $hash = (Get-FileHash -Algorithm SHA256 $psexec).Hash
           $signature = Get-AuthenticodeSignature -FilePath $psexec
@@ -248,6 +248,7 @@ if (-not $psexec) { throw "PsExec64 introuvable dans: $($psexecCandidates -join 
           [pscustomobject]@{
             TimestampUtc = [DateTime]::UtcNow.ToString("o")
             Identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+            IdentitySid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
             ComputerSystem = $cs | Select-Object Manufacturer,Model,SystemType,TotalPhysicalMemory
             ComputerSystemProduct = $csp | Select-Object Vendor,Name,Version,IdentifyingNumber,UUID
             Processor = $cpu | Select-Object Name,NumberOfCores,NumberOfLogicalProcessors
@@ -263,17 +264,20 @@ if (-not $psexec) { throw "PsExec64 introuvable dans: $($psexecCandidates -join 
           '@ | Set-Content $script -Encoding utf8
 
           $psexecCandidates = @(
-  "$env:SystemRoot\System32\PsExec64.exe",
-  "C:\Tools\PsExec\PsExec64.exe",
-  "C:\Users\adm\Downloads\PsExec64.exe"
-)
-$psexec = $psexecCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
-if (-not $psexec) { throw "PsExec64 introuvable dans: $($psexecCandidates -join ', ')" }
+            "C:\Tools\PsExec\PsExec64.exe",
+            "$env:SystemRoot\System32\PsExec64.exe",
+            "C:\Users\adm\Downloads\PsExec64.exe"
+          )
+          $psexec = $psexecCandidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+          if (-not $psexec) { throw "PsExec64 introuvable dans: $($psexecCandidates -join ', ')" }
           & $psexec -accepteula -nobanner -s -h -w $env:GITHUB_WORKSPACE powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $script
           if ($LASTEXITCODE -ne 0) { throw "PsExec inventory failed: $LASTEXITCODE" }
 
           $inventory = Get-Content hardware-inventory.json -Raw | ConvertFrom-Json
-          if ($inventory.IdentitySid -ne 'S-1-5-18') { throw "Expected SYSTEM, got $($inventory.Identity)" }
+          if ($inventory.IdentitySid -ne 'S-1-5-18') {
+            throw "Expected LocalSystem SID S-1-5-18, got SID=$($inventory.IdentitySid) Name=$($inventory.Identity)"
+          }
+          Write-Host "[PASS] LocalSystem SID S-1-5-18 confirmé: $($inventory.Identity)"
 
           Get-ChildItem hil -File | Get-FileHash -Algorithm SHA256 |
             Select-Object Path,Hash |
@@ -336,12 +340,12 @@ if (-not $psexec) { throw "PsExec64 introuvable dans: $($psexecCandidates -join 
           '@ | Set-Content $script -Encoding utf8
 
           $psexecCandidates = @(
-  "$env:SystemRoot\System32\PsExec64.exe",
-  "C:\Tools\PsExec\PsExec64.exe",
-  "C:\Users\adm\Downloads\PsExec64.exe"
-)
-$psexec = $psexecCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
-if (-not $psexec) { throw "PsExec64 introuvable dans: $($psexecCandidates -join ', ')" }
+            "C:\Tools\PsExec\PsExec64.exe",
+            "$env:SystemRoot\System32\PsExec64.exe",
+            "C:\Users\adm\Downloads\PsExec64.exe"
+          )
+          $psexec = $psexecCandidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+          if (-not $psexec) { throw "PsExec64 introuvable dans: $($psexecCandidates -join ', ')" }
           & $psexec -accepteula -nobanner -s -h -w $env:GITHUB_WORKSPACE powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $script
           if ($LASTEXITCODE -ne 0) { throw "PsExec QEMU validation failed: $LASTEXITCODE" }
 
@@ -414,12 +418,12 @@ if (-not $psexec) { throw "PsExec64 introuvable dans: $($psexecCandidates -join 
           '@ | Set-Content $script -Encoding utf8
 
           $psexecCandidates = @(
-  "$env:SystemRoot\System32\PsExec64.exe",
-  "C:\Tools\PsExec\PsExec64.exe",
-  "C:\Users\adm\Downloads\PsExec64.exe"
-)
-$psexec = $psexecCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
-if (-not $psexec) { throw "PsExec64 introuvable dans: $($psexecCandidates -join ', ')" }
+            "C:\Tools\PsExec\PsExec64.exe",
+            "$env:SystemRoot\System32\PsExec64.exe",
+            "C:\Users\adm\Downloads\PsExec64.exe"
+          )
+          $psexec = $psexecCandidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+          if (-not $psexec) { throw "PsExec64 introuvable dans: $($psexecCandidates -join ', ')" }
           & $psexec -accepteula -nobanner -s -h -w $env:GITHUB_WORKSPACE powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $script
           if ($LASTEXITCODE -ne 0) { throw "PsExec VMware validation failed: $LASTEXITCODE" }
 
