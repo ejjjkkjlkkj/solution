@@ -21,6 +21,10 @@
 #define OMNI_HDA_DMA_BUFFER_BYTES 4096U
 #define OMNI_HDA_DMA_FORMAT       0x0011U /* 48 kHz, 16-bit, stereo */
 #define OMNI_HDA_DMA_STREAM_TAG   1U
+#define OMNI_HDA_TONE_HZ          750U
+#define OMNI_HDA_TONE_RATE        48000U
+#define OMNI_HDA_TONE_AMPLITUDE   8192
+#define OMNI_HDA_TONE_MILLISECONDS 4000U
 
 STATIC EFI_GUID mOmniEvidenceVariableGuid = {
   0x8d8a7e66, 0x0a4d, 0x4c9f,
@@ -117,6 +121,15 @@ typedef struct {
   UINTN DmaStreamTag;
   UINTN DmaBufferBytes;
   UINTN DmaStatus;
+  UINTN DmaTonePrepared;
+  UINTN DmaToneFrames;
+  UINTN DmaToneMilliseconds;
+  UINTN RouteProgrammed;
+  UINTN RoutePinControlAfter;
+  UINTN RouteEapdCapable;
+  UINTN RouteEapdAfter;
+  UINTN ConverterAmpProgrammed;
+  UINTN PinAmpProgrammed;
 
   /* PCI/MMIO validity evidence. */
   UINTN PciAttributesSupported;
@@ -1184,6 +1197,211 @@ STATIC VOID ProbeHdaCodecTopology (
   }
 }
 
+STATIC VOID FillHdaTone (
+  OUT VOID  *Buffer,
+  IN  UINTN Bytes
+  )
+{
+  INT16 *Samples;
+  UINTN Frames;
+  UINTN Frame;
+  UINTN PeriodFrames;
+  INT16 Sample;
+
+  if ((Buffer == NULL) || (Bytes < 4)) return;
+
+  Samples = (INT16 *)Buffer;
+  Frames = Bytes / (sizeof (INT16) * 2U);
+  PeriodFrames = OMNI_HDA_TONE_RATE / OMNI_HDA_TONE_HZ;
+  if (PeriodFrames < 2) PeriodFrames = 2;
+
+  for (Frame = 0; Frame < Frames; ++Frame) {
+    Sample = ((Frame % PeriodFrames) < (PeriodFrames / 2U))
+      ? (INT16)OMNI_HDA_TONE_AMPLITUDE
+      : (INT16)(-OMNI_HDA_TONE_AMPLITUDE);
+
+    Samples[(Frame * 2U) + 0U] = Sample;
+    Samples[(Frame * 2U) + 1U] = Sample;
+  }
+}
+
+STATIC EFI_STATUS ProgramHdaOutputRoute (
+  EFI_PCI_IO_PROTOCOL *PciIo,
+  IN OUT OMNI_HDA_STATS *Stats
+  )
+{
+  EFI_STATUS Status;
+  UINT32 Response;
+  UINT32 AmpCaps;
+  UINTN PinControl;
+  UINTN Eapd;
+  UINTN Gain;
+
+  if ((PciIo == NULL) || (Stats == NULL) ||
+      (Stats->ConverterNode == 0) || (Stats->PinNode == 0)) {
+    return EFI_INVALID_PARAMETER;
+  }
+
+  /*
+   * Put the audio function group, converter and selected physical pin in D0.
+   * These are standard HDA power-state verbs and are harmless when already D0.
+   */
+  Response = 0;
+  Status = HdaImmediateCommand (
+             PciIo,
+             HdaVerb (Stats->CodecAddress, Stats->AudioFunctionGroup, 0x705, 0),
+             &Response
+             );
+  if (EFI_ERROR (Status)) return Status;
+  Stats->ImmediateCommands++;
+
+  Response = 0;
+  Status = HdaImmediateCommand (
+             PciIo,
+             HdaVerb (Stats->CodecAddress, Stats->ConverterNode, 0x705, 0),
+             &Response
+             );
+  if (EFI_ERROR (Status)) return Status;
+  Stats->ImmediateCommands++;
+
+  Response = 0;
+  Status = HdaImmediateCommand (
+             PciIo,
+             HdaVerb (Stats->CodecAddress, Stats->PinNode, 0x705, 0),
+             &Response
+             );
+  if (EFI_ERROR (Status)) return Status;
+  Stats->ImmediateCommands++;
+
+  /*
+   * Enable the physical output pin. For a headphone pin, also assert HP enable.
+   */
+  PinControl = (Stats->PinControl | 0x40U) & 0xFFU;
+  if (Stats->PinDefaultDevice == 0x02U) {
+    PinControl |= 0x80U;
+  }
+
+  Response = 0;
+  Status = HdaImmediateCommand (
+             PciIo,
+             HdaVerb (Stats->CodecAddress, Stats->PinNode, 0x707, PinControl),
+             &Response
+             );
+  if (EFI_ERROR (Status)) return Status;
+  Stats->ImmediateCommands++;
+
+  Response = 0;
+  Status = HdaImmediateCommand (
+             PciIo,
+             HdaVerb (Stats->CodecAddress, Stats->PinNode, 0xF07, 0),
+             &Response
+             );
+  if (EFI_ERROR (Status)) return Status;
+  Stats->ImmediateCommands++;
+  Stats->RoutePinControlAfter = Response & 0xFFU;
+
+  /*
+   * If the pin advertises EAPD support, enable the external amplifier.
+   */
+  Stats->RouteEapdCapable = ((Stats->PinCapabilities & (1U << 16)) != 0) ? 1U : 0U;
+  if (Stats->RouteEapdCapable != 0) {
+    Eapd = (Stats->PinEapd | 0x02U) & 0xFFU;
+
+    Response = 0;
+    Status = HdaImmediateCommand (
+               PciIo,
+               HdaVerb (Stats->CodecAddress, Stats->PinNode, 0x70C, Eapd),
+               &Response
+               );
+    if (EFI_ERROR (Status)) return Status;
+    Stats->ImmediateCommands++;
+
+    Response = 0;
+    Status = HdaImmediateCommand (
+               PciIo,
+               HdaVerb (Stats->CodecAddress, Stats->PinNode, 0xF0C, 0),
+               &Response
+               );
+    if (EFI_ERROR (Status)) return Status;
+    Stats->ImmediateCommands++;
+    Stats->RouteEapdAfter = Response & 0xFFU;
+  }
+
+  /*
+   * Unmute output amplifiers at their codec-declared 0 dB index.
+   * AC_AMPCAP_OFFSET is the 0 dB gain index.
+   */
+  if ((Stats->ConverterWidgetCaps & (1U << 2)) != 0) {
+    AmpCaps = 0;
+    if (!EFI_ERROR (HdaGetParameter (
+                     PciIo,
+                     Stats->CodecAddress,
+                     Stats->ConverterNode,
+                     0x12,
+                     &AmpCaps
+                     ))) {
+      Stats->ImmediateCommands++;
+      Gain = AmpCaps & 0x7FU;
+      Response = 0;
+      Status = HdaImmediateCommand (
+                 PciIo,
+                 HdaVerb16 (
+                   Stats->CodecAddress,
+                   Stats->ConverterNode,
+                   0x3,
+                   0xB000U | Gain
+                   ),
+                 &Response
+                 );
+      if (!EFI_ERROR (Status)) {
+        Stats->ImmediateCommands++;
+        Stats->ConverterAmpProgrammed = 1;
+      }
+    }
+  }
+
+  if ((Stats->PinWidgetCaps & (1U << 2)) != 0) {
+    AmpCaps = 0;
+    if (!EFI_ERROR (HdaGetParameter (
+                     PciIo,
+                     Stats->CodecAddress,
+                     Stats->PinNode,
+                     0x12,
+                     &AmpCaps
+                     ))) {
+      Stats->ImmediateCommands++;
+      Gain = AmpCaps & 0x7FU;
+      Response = 0;
+      Status = HdaImmediateCommand (
+                 PciIo,
+                 HdaVerb16 (
+                   Stats->CodecAddress,
+                   Stats->PinNode,
+                   0x3,
+                   0xB000U | Gain
+                   ),
+                 &Response
+                 );
+      if (!EFI_ERROR (Status)) {
+        Stats->ImmediateCommands++;
+        Stats->PinAmpProgrammed = 1;
+      }
+    }
+  }
+
+  if ((Stats->RoutePinControlAfter & 0x40U) == 0) {
+    return EFI_DEVICE_ERROR;
+  }
+
+  if ((Stats->RouteEapdCapable != 0) &&
+      ((Stats->RouteEapdAfter & 0x02U) == 0)) {
+    return EFI_DEVICE_ERROR;
+  }
+
+  Stats->RouteProgrammed = 1;
+  return EFI_SUCCESS;
+}
+
 STATIC EFI_STATUS ProgramHdaDmaProof (
   EFI_PCI_IO_PROTOCOL *PciIo,
   EFI_SYSTEM_TABLE    *SystemTable,
@@ -1248,7 +1466,10 @@ STATIC EFI_STATUS ProgramHdaDmaProof (
   Status = PciIo->AllocateBuffer (PciIo, AllocateAnyPages, EfiBootServicesData, 1, &BdlHost, 0);
   if (EFI_ERROR (Status)) { FinalStatus = Status; goto Cleanup; }
 
-  ZeroBytes (AudioHost, OMNI_HDA_DMA_BUFFER_BYTES);
+  FillHdaTone (AudioHost, OMNI_HDA_DMA_BUFFER_BYTES);
+  Stats->DmaTonePrepared = 1;
+  Stats->DmaToneFrames = OMNI_HDA_DMA_BUFFER_BYTES / (sizeof (INT16) * 2U);
+  Stats->DmaToneMilliseconds = OMNI_HDA_TONE_MILLISECONDS;
   ZeroBytes (BdlHost, 4096);
 
   Status = PciIo->Map (
@@ -1341,6 +1562,9 @@ STATIC EFI_STATUS ProgramHdaDmaProof (
   Status = PciIo->Mem.Write (PciIo, EfiPciIoWidthUint32, 0, StreamOffset + 0x1C, 1, &Value32);
   if (EFI_ERROR (Status)) { FinalStatus = Status; goto Cleanup; }
 
+  Status = ProgramHdaOutputRoute (PciIo, Stats);
+  if (EFI_ERROR (Status)) { FinalStatus = Status; goto Cleanup; }
+
   Response = 0;
   Status = HdaImmediateCommand (
              PciIo,
@@ -1404,15 +1628,18 @@ STATIC EFI_STATUS ProgramHdaDmaProof (
   if ((StreamCtlLow & 0x0002U) != 0) { Stats->DmaRunObserved = 1; }
 
   CurrentLpib = PreviousLpib;
-  for (Spin = 0; Spin < 50; ++Spin) {
+  for (Spin = 0; Spin < OMNI_HDA_TONE_MILLISECONDS; ++Spin) {
+    UINT32 SampledLpib;
+
     SystemTable->BootServices->Stall (1000);
-    CurrentLpib = 0;
-    Status = PciIo->Mem.Read (PciIo, EfiPciIoWidthUint32, 0, StreamOffset + 0x04, 1, &CurrentLpib);
+    SampledLpib = 0;
+    Status = PciIo->Mem.Read (PciIo, EfiPciIoWidthUint32, 0, StreamOffset + 0x04, 1, &SampledLpib);
     if (EFI_ERROR (Status)) { FinalStatus = Status; break; }
-    if (CurrentLpib != PreviousLpib) {
+
+    if (SampledLpib != CurrentLpib) {
       Stats->DmaProgress = 1;
-      break;
     }
+    CurrentLpib = SampledLpib;
   }
 
   Stats->DmaLpibAfter = CurrentLpib;
@@ -2152,6 +2379,15 @@ STATIC EFI_STATUS SaveDiag (
   if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_DMA_STREAM_TAG", Hda->DmaStreamTag);
   if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_DMA_BUFFER_BYTES", Hda->DmaBufferBytes);
   if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_DMA_STATUS", Hda->DmaStatus);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_DMA_TONE_PREPARED", Hda->DmaTonePrepared);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_DMA_TONE_FRAMES", Hda->DmaToneFrames);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_DMA_TONE_MILLISECONDS", Hda->DmaToneMilliseconds);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_ROUTE_PROGRAMMED", Hda->RouteProgrammed);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_ROUTE_PIN_CONTROL_AFTER", Hda->RoutePinControlAfter);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_ROUTE_EAPD_CAPABLE", Hda->RouteEapdCapable);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_ROUTE_EAPD_AFTER", Hda->RouteEapdAfter);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_CONVERTER_AMP_PROGRAMMED", Hda->ConverterAmpProgrammed);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_PIN_AMP_PROGRAMMED", Hda->PinAmpProgrammed);
   if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_PCI_ATTRIBUTES_SUPPORTED", Hda->PciAttributesSupported);
   if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_PCI_ATTRIBUTES_ORIGINAL", Hda->PciAttributesOriginal);
   if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_PCI_ATTRIBUTES_AFTER", Hda->PciAttributesAfter);
