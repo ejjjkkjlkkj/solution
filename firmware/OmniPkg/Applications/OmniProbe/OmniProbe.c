@@ -1562,8 +1562,19 @@ STATIC EFI_STATUS ProgramHdaDmaProof (
   Status = PciIo->Mem.Write (PciIo, EfiPciIoWidthUint32, 0, StreamOffset + 0x1C, 1, &Value32);
   if (EFI_ERROR (Status)) { FinalStatus = Status; goto Cleanup; }
 
+  /*
+   * Keep the analog codec route as an independent hardware gate.
+   *
+   * A pin/EAPD/amplifier failure must not prevent us from proving the
+   * controller-side DMA transport itself.  The stream descriptor, converter
+   * stream tag, RUN bit and LPIB are valid independent observations even when
+   * the selected physical pin is not yet routable.
+   */
   Status = ProgramHdaOutputRoute (PciIo, Stats);
-  if (EFI_ERROR (Status)) { FinalStatus = Status; goto Cleanup; }
+  if (EFI_ERROR (Status)) {
+    Stats->RouteProgrammed = 0;
+    Status = EFI_SUCCESS;
+  }
 
   Response = 0;
   Status = HdaImmediateCommand (
@@ -1618,14 +1629,52 @@ STATIC EFI_STATUS ProgramHdaDmaProof (
   StreamCtlLow |= 0x0002U;
   Status = PciIo->Mem.Write (PciIo, EfiPciIoWidthUint16, 0, StreamOffset + 0x00, 1, &StreamCtlLow);
   if (EFI_ERROR (Status)) { FinalStatus = Status; goto Cleanup; }
+
+  /*
+   * Make the posted MMIO write visible before judging RUN.  Then poll the
+   * controller rather than treating a single immediate read as authoritative.
+   */
+  Status = PciIo->Flush (PciIo);
+  if (EFI_ERROR (Status)) { FinalStatus = Status; goto Cleanup; }
   StreamStarted = TRUE;
 
-  StreamCtlLow = 0;
+  for (Spin = 0; Spin < 1000; ++Spin) {
+    StreamCtlLow = 0;
+    Status = PciIo->Mem.Read (
+                         PciIo,
+                         EfiPciIoWidthUint16,
+                         0,
+                         StreamOffset + 0x00,
+                         1,
+                         &StreamCtlLow
+                         );
+    if (EFI_ERROR (Status)) { FinalStatus = Status; goto Cleanup; }
+
+    if ((StreamCtlLow & 0x0002U) != 0) {
+      Stats->DmaRunObserved = 1;
+      break;
+    }
+
+    SystemTable->BootServices->Stall (10);
+  }
+
   StreamCtlHigh = 0;
-  PciIo->Mem.Read (PciIo, EfiPciIoWidthUint16, 0, StreamOffset + 0x00, 1, &StreamCtlLow);
-  PciIo->Mem.Read (PciIo, EfiPciIoWidthUint8, 0, StreamOffset + 0x02, 1, &StreamCtlHigh);
+  Status = PciIo->Mem.Read (
+                       PciIo,
+                       EfiPciIoWidthUint8,
+                       0,
+                       StreamOffset + 0x02,
+                       1,
+                       &StreamCtlHigh
+                       );
+  if (EFI_ERROR (Status)) { FinalStatus = Status; goto Cleanup; }
+
   Stats->FirstOutputStreamCtl = StreamCtlLow | ((UINTN)StreamCtlHigh << 16);
-  if ((StreamCtlLow & 0x0002U) != 0) { Stats->DmaRunObserved = 1; }
+
+  if (Stats->DmaRunObserved == 0) {
+    FinalStatus = EFI_TIMEOUT;
+    goto Cleanup;
+  }
 
   CurrentLpib = PreviousLpib;
   for (Spin = 0; Spin < OMNI_HDA_TONE_MILLISECONDS; ++Spin) {
