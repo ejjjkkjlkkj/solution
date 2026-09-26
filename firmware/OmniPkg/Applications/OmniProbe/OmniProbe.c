@@ -18,6 +18,9 @@
 #define OMNI_CHALLENGE_HEX_LEN 64
 #define OMNI_UUID_TEXT_LEN      36
 #define OMNI_NVRAM_NAME          L"OmniBootEvidence"
+#define OMNI_HDA_DMA_BUFFER_BYTES 4096U
+#define OMNI_HDA_DMA_FORMAT       0x0011U /* 48 kHz, 16-bit, stereo */
+#define OMNI_HDA_DMA_STREAM_TAG   1U
 
 STATIC EFI_GUID mOmniEvidenceVariableGuid = {
   0x8d8a7e66, 0x0a4d, 0x4c9f,
@@ -104,6 +107,16 @@ typedef struct {
   UINTN FirstOutputStreamBdpl;
   UINTN FirstOutputStreamBdpu;
   UINTN StreamCapabilityEvidence;
+  UINTN DmaProgramAttempted;
+  UINTN DmaProgrammed;
+  UINTN DmaRunObserved;
+  UINTN DmaLpibBefore;
+  UINTN DmaLpibAfter;
+  UINTN DmaProgress;
+  UINTN DmaFormat;
+  UINTN DmaStreamTag;
+  UINTN DmaBufferBytes;
+  UINTN DmaStatus;
 
   /* PCI/MMIO validity evidence. */
   UINTN PciAttributesSupported;
@@ -115,6 +128,27 @@ typedef struct {
   UINTN ControllerResetReady;
   UINTN InvalidMmioReads;
 } OMNI_HDA_STATS;
+
+typedef struct {
+  UINT64 Address;
+  UINT32 Length;
+  UINT32 Flags;
+} OMNI_HDA_BDL_ENTRY;
+
+STATIC VOID ZeroBytes (
+  OUT VOID  *Buffer,
+  IN  UINTN Size
+  )
+{
+  UINT8 *Byte;
+  UINTN Index;
+
+  if (Buffer == NULL) return;
+  Byte = (UINT8 *)Buffer;
+  for (Index = 0; Index < Size; ++Index) {
+    Byte[Index] = 0;
+  }
+}
 
 STATIC UINTN AppendAsciiBounded (
   OUT CHAR8       *Buffer,
@@ -801,6 +835,21 @@ STATIC UINT32 HdaVerb (
            );
 }
 
+STATIC UINT32 HdaVerb16 (
+  UINTN Codec,
+  UINTN Node,
+  UINTN Verb,
+  UINTN Payload
+  )
+{
+  return (UINT32)(
+           ((Codec & 0x0F) << 28) |
+           ((Node & 0xFF) << 20) |
+           ((Verb & 0x0F) << 16) |
+           (Payload & 0xFFFF)
+           );
+}
+
 STATIC EFI_STATUS HdaImmediateCommand (
   EFI_PCI_IO_PROTOCOL *PciIo,
   UINT32              Command,
@@ -1133,6 +1182,266 @@ STATIC VOID ProbeHdaCodecTopology (
       }
     }
   }
+}
+
+STATIC EFI_STATUS ProgramHdaDmaProof (
+  EFI_PCI_IO_PROTOCOL *PciIo,
+  EFI_SYSTEM_TABLE    *SystemTable,
+  IN OUT OMNI_HDA_STATS *Stats
+  )
+{
+  EFI_STATUS Status;
+  EFI_STATUS FinalStatus;
+  VOID *AudioHost;
+  VOID *BdlHost;
+  VOID *AudioMapping;
+  VOID *BdlMapping;
+  EFI_PHYSICAL_ADDRESS AudioDevice;
+  EFI_PHYSICAL_ADDRESS BdlDevice;
+  UINTN AudioBytes;
+  UINTN BdlBytes;
+  OMNI_HDA_BDL_ENTRY *Bdl;
+  UINTN StreamOffset;
+  UINT16 StreamCtlLow;
+  UINT8 StreamCtlHigh;
+  UINT8 StreamStatus;
+  UINT32 Value32;
+  UINT16 Value16;
+  UINT32 Response;
+  UINT32 PreviousLpib;
+  UINT32 CurrentLpib;
+  UINTN Spin;
+  BOOLEAN StreamStarted;
+
+  if ((PciIo == NULL) || (SystemTable == NULL) ||
+      (SystemTable->BootServices == NULL) || (Stats == NULL)) {
+    return EFI_INVALID_PARAMETER;
+  }
+
+  Stats->DmaProgramAttempted = 1;
+  Stats->DmaFormat = OMNI_HDA_DMA_FORMAT;
+  Stats->DmaStreamTag = OMNI_HDA_DMA_STREAM_TAG;
+  Stats->DmaBufferBytes = OMNI_HDA_DMA_BUFFER_BYTES;
+
+  if ((Stats->MmioValid == 0) || (Stats->ControllerResetReady == 0) ||
+      (Stats->OutputStreams == 0) || (Stats->FirstOutputStreamOffset == 0) ||
+      (Stats->ConverterNode == 0)) {
+    Stats->DmaStatus = (UINTN)EFI_NOT_READY;
+    return EFI_NOT_READY;
+  }
+
+  AudioHost = NULL;
+  BdlHost = NULL;
+  AudioMapping = NULL;
+  BdlMapping = NULL;
+  AudioDevice = 0;
+  BdlDevice = 0;
+  AudioBytes = OMNI_HDA_DMA_BUFFER_BYTES;
+  BdlBytes = 4096;
+  StreamStarted = FALSE;
+  FinalStatus = EFI_SUCCESS;
+  StreamOffset = Stats->FirstOutputStreamOffset;
+
+  Status = PciIo->AllocateBuffer (PciIo, AllocateAnyPages, EfiBootServicesData, 1, &AudioHost, 0);
+  if (EFI_ERROR (Status)) { FinalStatus = Status; goto Cleanup; }
+
+  Status = PciIo->AllocateBuffer (PciIo, AllocateAnyPages, EfiBootServicesData, 1, &BdlHost, 0);
+  if (EFI_ERROR (Status)) { FinalStatus = Status; goto Cleanup; }
+
+  ZeroBytes (AudioHost, OMNI_HDA_DMA_BUFFER_BYTES);
+  ZeroBytes (BdlHost, 4096);
+
+  Status = PciIo->Map (
+                    PciIo,
+                    EfiPciIoOperationBusMasterCommonBuffer,
+                    AudioHost,
+                    &AudioBytes,
+                    &AudioDevice,
+                    &AudioMapping
+                    );
+  if (EFI_ERROR (Status) || (AudioBytes < OMNI_HDA_DMA_BUFFER_BYTES)) {
+    FinalStatus = EFI_ERROR (Status) ? Status : EFI_BAD_BUFFER_SIZE;
+    goto Cleanup;
+  }
+
+  Status = PciIo->Map (
+                    PciIo,
+                    EfiPciIoOperationBusMasterCommonBuffer,
+                    BdlHost,
+                    &BdlBytes,
+                    &BdlDevice,
+                    &BdlMapping
+                    );
+  if (EFI_ERROR (Status) || (BdlBytes < sizeof (OMNI_HDA_BDL_ENTRY))) {
+    FinalStatus = EFI_ERROR (Status) ? Status : EFI_BAD_BUFFER_SIZE;
+    goto Cleanup;
+  }
+
+  Bdl = (OMNI_HDA_BDL_ENTRY *)BdlHost;
+  Bdl[0].Address = (UINT64)AudioDevice;
+  Bdl[0].Length = OMNI_HDA_DMA_BUFFER_BYTES;
+  Bdl[0].Flags = 0;
+
+  Status = PciIo->Flush (PciIo);
+  if (EFI_ERROR (Status)) { FinalStatus = Status; goto Cleanup; }
+
+  StreamCtlLow = 0;
+  Status = PciIo->Mem.Read (PciIo, EfiPciIoWidthUint16, 0, StreamOffset + 0x00, 1, &StreamCtlLow);
+  if (EFI_ERROR (Status)) { FinalStatus = Status; goto Cleanup; }
+
+  StreamCtlLow &= (UINT16)~0x0002U;
+  Status = PciIo->Mem.Write (PciIo, EfiPciIoWidthUint16, 0, StreamOffset + 0x00, 1, &StreamCtlLow);
+  if (EFI_ERROR (Status)) { FinalStatus = Status; goto Cleanup; }
+
+  StreamCtlLow |= 0x0001U;
+  Status = PciIo->Mem.Write (PciIo, EfiPciIoWidthUint16, 0, StreamOffset + 0x00, 1, &StreamCtlLow);
+  if (EFI_ERROR (Status)) { FinalStatus = Status; goto Cleanup; }
+
+  for (Spin = 0; Spin < 1000; ++Spin) {
+    SystemTable->BootServices->Stall (10);
+    StreamCtlLow = 0;
+    Status = PciIo->Mem.Read (PciIo, EfiPciIoWidthUint16, 0, StreamOffset + 0x00, 1, &StreamCtlLow);
+    if (!EFI_ERROR (Status) && ((StreamCtlLow & 0x0001U) != 0)) break;
+  }
+  if (Spin == 1000) { FinalStatus = EFI_TIMEOUT; goto Cleanup; }
+
+  StreamCtlLow &= (UINT16)~0x0001U;
+  Status = PciIo->Mem.Write (PciIo, EfiPciIoWidthUint16, 0, StreamOffset + 0x00, 1, &StreamCtlLow);
+  if (EFI_ERROR (Status)) { FinalStatus = Status; goto Cleanup; }
+
+  for (Spin = 0; Spin < 1000; ++Spin) {
+    SystemTable->BootServices->Stall (10);
+    StreamCtlLow = 0;
+    Status = PciIo->Mem.Read (PciIo, EfiPciIoWidthUint16, 0, StreamOffset + 0x00, 1, &StreamCtlLow);
+    if (!EFI_ERROR (Status) && ((StreamCtlLow & 0x0001U) == 0)) break;
+  }
+  if (Spin == 1000) { FinalStatus = EFI_TIMEOUT; goto Cleanup; }
+
+  StreamStatus = 0x1CU;
+  Status = PciIo->Mem.Write (PciIo, EfiPciIoWidthUint8, 0, StreamOffset + 0x03, 1, &StreamStatus);
+  if (EFI_ERROR (Status)) { FinalStatus = Status; goto Cleanup; }
+
+  Value32 = OMNI_HDA_DMA_BUFFER_BYTES;
+  Status = PciIo->Mem.Write (PciIo, EfiPciIoWidthUint32, 0, StreamOffset + 0x08, 1, &Value32);
+  if (EFI_ERROR (Status)) { FinalStatus = Status; goto Cleanup; }
+
+  Value16 = 0;
+  Status = PciIo->Mem.Write (PciIo, EfiPciIoWidthUint16, 0, StreamOffset + 0x0C, 1, &Value16);
+  if (EFI_ERROR (Status)) { FinalStatus = Status; goto Cleanup; }
+
+  Value16 = OMNI_HDA_DMA_FORMAT;
+  Status = PciIo->Mem.Write (PciIo, EfiPciIoWidthUint16, 0, StreamOffset + 0x12, 1, &Value16);
+  if (EFI_ERROR (Status)) { FinalStatus = Status; goto Cleanup; }
+
+  Value32 = (UINT32)(BdlDevice & 0xFFFFFFFFULL);
+  Status = PciIo->Mem.Write (PciIo, EfiPciIoWidthUint32, 0, StreamOffset + 0x18, 1, &Value32);
+  if (EFI_ERROR (Status)) { FinalStatus = Status; goto Cleanup; }
+
+  Value32 = (UINT32)(BdlDevice >> 32);
+  Status = PciIo->Mem.Write (PciIo, EfiPciIoWidthUint32, 0, StreamOffset + 0x1C, 1, &Value32);
+  if (EFI_ERROR (Status)) { FinalStatus = Status; goto Cleanup; }
+
+  Response = 0;
+  Status = HdaImmediateCommand (
+             PciIo,
+             HdaVerb16 (Stats->CodecAddress, Stats->ConverterNode, 0x2, OMNI_HDA_DMA_FORMAT),
+             &Response
+             );
+  if (EFI_ERROR (Status)) { FinalStatus = Status; goto Cleanup; }
+  Stats->ImmediateCommands++;
+
+  Response = 0;
+  Status = HdaImmediateCommand (
+             PciIo,
+             HdaVerb (
+               Stats->CodecAddress,
+               Stats->ConverterNode,
+               0x706,
+               (OMNI_HDA_DMA_STREAM_TAG << 4)
+               ),
+             &Response
+             );
+  if (EFI_ERROR (Status)) { FinalStatus = Status; goto Cleanup; }
+  Stats->ImmediateCommands++;
+
+  StreamCtlHigh = 0;
+  Status = PciIo->Mem.Read (PciIo, EfiPciIoWidthUint8, 0, StreamOffset + 0x02, 1, &StreamCtlHigh);
+  if (EFI_ERROR (Status)) { FinalStatus = Status; goto Cleanup; }
+
+  StreamCtlHigh = (UINT8)((StreamCtlHigh & 0x0FU) | (OMNI_HDA_DMA_STREAM_TAG << 4));
+  Status = PciIo->Mem.Write (PciIo, EfiPciIoWidthUint8, 0, StreamOffset + 0x02, 1, &StreamCtlHigh);
+  if (EFI_ERROR (Status)) { FinalStatus = Status; goto Cleanup; }
+
+  Stats->FirstOutputStreamCbl = OMNI_HDA_DMA_BUFFER_BYTES;
+  Stats->FirstOutputStreamLvi = 0;
+  Stats->FirstOutputStreamFormat = OMNI_HDA_DMA_FORMAT;
+  Stats->FirstOutputStreamBdpl = (UINTN)(BdlDevice & 0xFFFFFFFFULL);
+  Stats->FirstOutputStreamBdpu = (UINTN)(BdlDevice >> 32);
+  Stats->DmaProgrammed = 1;
+
+  Status = PciIo->Flush (PciIo);
+  if (EFI_ERROR (Status)) { FinalStatus = Status; goto Cleanup; }
+
+  PreviousLpib = 0;
+  Status = PciIo->Mem.Read (PciIo, EfiPciIoWidthUint32, 0, StreamOffset + 0x04, 1, &PreviousLpib);
+  if (EFI_ERROR (Status)) { FinalStatus = Status; goto Cleanup; }
+  Stats->DmaLpibBefore = PreviousLpib;
+
+  StreamCtlLow = 0;
+  Status = PciIo->Mem.Read (PciIo, EfiPciIoWidthUint16, 0, StreamOffset + 0x00, 1, &StreamCtlLow);
+  if (EFI_ERROR (Status)) { FinalStatus = Status; goto Cleanup; }
+
+  StreamCtlLow |= 0x0002U;
+  Status = PciIo->Mem.Write (PciIo, EfiPciIoWidthUint16, 0, StreamOffset + 0x00, 1, &StreamCtlLow);
+  if (EFI_ERROR (Status)) { FinalStatus = Status; goto Cleanup; }
+  StreamStarted = TRUE;
+
+  StreamCtlLow = 0;
+  StreamCtlHigh = 0;
+  PciIo->Mem.Read (PciIo, EfiPciIoWidthUint16, 0, StreamOffset + 0x00, 1, &StreamCtlLow);
+  PciIo->Mem.Read (PciIo, EfiPciIoWidthUint8, 0, StreamOffset + 0x02, 1, &StreamCtlHigh);
+  Stats->FirstOutputStreamCtl = StreamCtlLow | ((UINTN)StreamCtlHigh << 16);
+  if ((StreamCtlLow & 0x0002U) != 0) { Stats->DmaRunObserved = 1; }
+
+  CurrentLpib = PreviousLpib;
+  for (Spin = 0; Spin < 50; ++Spin) {
+    SystemTable->BootServices->Stall (1000);
+    CurrentLpib = 0;
+    Status = PciIo->Mem.Read (PciIo, EfiPciIoWidthUint32, 0, StreamOffset + 0x04, 1, &CurrentLpib);
+    if (EFI_ERROR (Status)) { FinalStatus = Status; break; }
+    if (CurrentLpib != PreviousLpib) {
+      Stats->DmaProgress = 1;
+      break;
+    }
+  }
+
+  Stats->DmaLpibAfter = CurrentLpib;
+  Stats->FirstOutputStreamLpib = CurrentLpib;
+  if (!EFI_ERROR (FinalStatus) && (Stats->DmaProgress == 0)) { FinalStatus = EFI_TIMEOUT; }
+
+Cleanup:
+  if (StreamStarted) {
+    StreamCtlLow = 0;
+    if (!EFI_ERROR (PciIo->Mem.Read (PciIo, EfiPciIoWidthUint16, 0, StreamOffset + 0x00, 1, &StreamCtlLow))) {
+      StreamCtlLow &= (UINT16)~0x0002U;
+      PciIo->Mem.Write (PciIo, EfiPciIoWidthUint16, 0, StreamOffset + 0x00, 1, &StreamCtlLow);
+    }
+    Response = 0;
+    HdaImmediateCommand (
+      PciIo,
+      HdaVerb (Stats->CodecAddress, Stats->ConverterNode, 0x706, 0),
+      &Response
+      );
+  }
+
+  PciIo->Flush (PciIo);
+  if (BdlMapping != NULL) { PciIo->Unmap (PciIo, BdlMapping); }
+  if (AudioMapping != NULL) { PciIo->Unmap (PciIo, AudioMapping); }
+  if (BdlHost != NULL) { PciIo->FreeBuffer (PciIo, 1, BdlHost); }
+  if (AudioHost != NULL) { PciIo->FreeBuffer (PciIo, 1, AudioHost); }
+
+  Stats->DmaStatus = (UINTN)FinalStatus;
+  return FinalStatus;
 }
 
 STATIC EFI_STATUS ProbeHda (
@@ -1609,6 +1918,7 @@ STATIC EFI_STATUS ProbeHda (
       }
 
       ProbeHdaCodecTopology (PciIo, Stats);
+      ProgramHdaDmaProof (PciIo, SystemTable, Stats);
     }
   }
 
@@ -1832,6 +2142,16 @@ STATIC EFI_STATUS SaveDiag (
   if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_FIRST_OUTPUT_STREAM_BDPL", Hda->FirstOutputStreamBdpl);
   if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_FIRST_OUTPUT_STREAM_BDPU", Hda->FirstOutputStreamBdpu);
   if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_STREAM_CAPABILITY_EVIDENCE", Hda->StreamCapabilityEvidence);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_DMA_PROGRAM_ATTEMPTED", Hda->DmaProgramAttempted);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_DMA_PROGRAMMED", Hda->DmaProgrammed);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_DMA_RUN_OBSERVED", Hda->DmaRunObserved);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_DMA_LPIB_BEFORE", Hda->DmaLpibBefore);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_DMA_LPIB_AFTER", Hda->DmaLpibAfter);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_DMA_PROGRESS", Hda->DmaProgress);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_DMA_FORMAT", Hda->DmaFormat);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_DMA_STREAM_TAG", Hda->DmaStreamTag);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_DMA_BUFFER_BYTES", Hda->DmaBufferBytes);
+  if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_DMA_STATUS", Hda->DmaStatus);
   if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_PCI_ATTRIBUTES_SUPPORTED", Hda->PciAttributesSupported);
   if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_PCI_ATTRIBUTES_ORIGINAL", Hda->PciAttributesOriginal);
   if (!EFI_ERROR (Status)) Status = FileWriteStat (File, "OMNI_HDA_PCI_ATTRIBUTES_AFTER", Hda->PciAttributesAfter);
@@ -2376,6 +2696,19 @@ UefiMain (
   WriteStat ("OMNI_HDA_FIRST_OUTPUT_STREAM_BDPL", Hda.FirstOutputStreamBdpl);
   WriteStat ("OMNI_HDA_FIRST_OUTPUT_STREAM_BDPU", Hda.FirstOutputStreamBdpu);
   WriteStat ("OMNI_HDA_STREAM_CAPABILITY_EVIDENCE", Hda.StreamCapabilityEvidence);
+  WriteStat ("OMNI_HDA_DMA_PROGRAM_ATTEMPTED", Hda.DmaProgramAttempted);
+  WriteStat ("OMNI_HDA_DMA_PROGRAMMED", Hda.DmaProgrammed);
+  WriteStat ("OMNI_HDA_DMA_RUN_OBSERVED", Hda.DmaRunObserved);
+  WriteStat ("OMNI_HDA_DMA_LPIB_BEFORE", Hda.DmaLpibBefore);
+  WriteStat ("OMNI_HDA_DMA_LPIB_AFTER", Hda.DmaLpibAfter);
+  WriteStat ("OMNI_HDA_DMA_PROGRESS", Hda.DmaProgress);
+  WriteStat ("OMNI_HDA_DMA_FORMAT", Hda.DmaFormat);
+  WriteStat ("OMNI_HDA_DMA_STREAM_TAG", Hda.DmaStreamTag);
+  WriteStat ("OMNI_HDA_DMA_BUFFER_BYTES", Hda.DmaBufferBytes);
+  WriteStat ("OMNI_HDA_DMA_STATUS", Hda.DmaStatus);
+  WriteText ((Hda.DmaProgrammed != 0) ? "OMNI_HDA_DMA_PROGRAM_PASS\n" : "OMNI_HDA_DMA_PROGRAM_MISS\n");
+  WriteText ((Hda.DmaRunObserved != 0) ? "OMNI_HDA_DMA_RUN_PASS\n" : "OMNI_HDA_DMA_RUN_MISS\n");
+  WriteText ((Hda.DmaProgress != 0) ? "OMNI_HDA_DMA_LPIB_PROGRESS_PASS\n" : "OMNI_HDA_DMA_LPIB_PROGRESS_MISS\n");
   WriteStat ("OMNI_HDA_PCI_ATTRIBUTES_SUPPORTED", Hda.PciAttributesSupported);
   WriteStat ("OMNI_HDA_PCI_ATTRIBUTES_ORIGINAL", Hda.PciAttributesOriginal);
   WriteStat ("OMNI_HDA_PCI_ATTRIBUTES_AFTER", Hda.PciAttributesAfter);
