@@ -1,6 +1,7 @@
 #include <Uefi.h>
 #include <Protocol/HiiDatabase.h>
 #include <Protocol/GraphicsOutput.h>
+#include <Protocol/BlockIo.h>
 #include <Protocol/PciIo.h>
 #include <Protocol/LoadedImage.h>
 #include <Protocol/SimpleFileSystem.h>
@@ -172,6 +173,69 @@ STATIC EFI_STATUS SaveNvramStage (
                                         Index,
                                         Buffer
                                         );
+}
+
+STATIC EFI_STATUS FlushLoadedImageBlockDevice (
+  EFI_HANDLE        ImageHandle,
+  EFI_SYSTEM_TABLE  *SystemTable
+  )
+{
+  EFI_STATUS Status;
+  EFI_LOADED_IMAGE_PROTOCOL *LoadedImage;
+  EFI_BLOCK_IO_PROTOCOL *BlockIo;
+
+  if ((SystemTable == NULL) || (SystemTable->BootServices == NULL)) {
+    return EFI_INVALID_PARAMETER;
+  }
+
+  LoadedImage = NULL;
+  Status = SystemTable->BootServices->HandleProtocol (
+                                      ImageHandle,
+                                      &gEfiLoadedImageProtocolGuid,
+                                      (VOID **)&LoadedImage
+                                      );
+  if (EFI_ERROR (Status) || (LoadedImage == NULL)) {
+    return EFI_NOT_FOUND;
+  }
+
+  BlockIo = NULL;
+  Status = SystemTable->BootServices->HandleProtocol (
+                                      LoadedImage->DeviceHandle,
+                                      &gEfiBlockIoProtocolGuid,
+                                      (VOID **)&BlockIo
+                                      );
+  if (EFI_ERROR (Status) || (BlockIo == NULL)) {
+    return EFI_UNSUPPORTED;
+  }
+
+  if ((BlockIo->Media == NULL) || !BlockIo->Media->MediaPresent) {
+    return EFI_NO_MEDIA;
+  }
+
+  return BlockIo->FlushBlocks (BlockIo);
+}
+
+STATIC EFI_STATUS ApplyPersistenceBarrier (
+  EFI_HANDLE        ImageHandle,
+  EFI_SYSTEM_TABLE  *SystemTable,
+  EFI_STATUS        PriorStatus
+  )
+{
+  EFI_STATUS FlushStatus;
+
+  if (EFI_ERROR (PriorStatus)) {
+    return PriorStatus;
+  }
+
+  FlushStatus = FlushLoadedImageBlockDevice (ImageHandle, SystemTable);
+  if ((FlushStatus == EFI_UNSUPPORTED) || (FlushStatus == EFI_NOT_FOUND)) {
+    return PriorStatus;
+  }
+  if (EFI_ERROR (FlushStatus)) {
+    return FlushStatus;
+  }
+
+  return PriorStatus;
 }
 
 STATIC VOID SerialInit (VOID) {
@@ -605,7 +669,7 @@ STATIC EFI_STATUS SaveTraceStage (
 
   File->Close (File);
   Root->Close (Root);
-  return Status;
+  return ApplyPersistenceBarrier (ImageHandle, SystemTable, Status);
 }
 
 STATIC EFI_STATUS ProbeGop (
@@ -1784,7 +1848,7 @@ STATIC EFI_STATUS SaveDiag (
 
   File->Close (File);
   Root->Close (Root);
-  return Status;
+  return ApplyPersistenceBarrier (ImageHandle, SystemTable, Status);
 }
 
 STATIC VOID ShowPhysicalScreen (
@@ -1913,7 +1977,7 @@ STATIC EFI_STATUS SaveEvidence (
 
   File->Close (File);
   Root->Close (Root);
-  return Status;
+  return ApplyPersistenceBarrier (ImageHandle, SystemTable, Status);
 }
 
 STATIC BOOLEAN IsQuestionOpcode (UINT8 OpCode) {
