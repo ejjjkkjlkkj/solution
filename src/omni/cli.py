@@ -75,7 +75,9 @@ def main() -> int:
                          help="echoue si l'identite ne correspond pas a l'ASUS M1603QA / Ryzen 7 5800H")
     inv_cmd.add_argument("--expect-uuid", help="UUID SMBIOS Type 1 attendu")
 
-    tpm_cmd = sub.add_parser("tpm-read", help="lecture seule du TPM 2.0 (proprietes, PCR 0 a 7), sans quote")
+    tpm_cmd = sub.add_parser("tpm-read", help="lecture du TPM 2.0 (proprietes, PCR 0 a 7) ; --quote ajoute un quote")
+    tpm_cmd.add_argument("--quote", action="store_true",
+                         help="ecrit dans le TPM : cree une cle transitoire, signe un quote, la vidange")
 
     chain_cmd = sub.add_parser("chain-report", help="rapport de bout en bout firmware + host")
     chain_cmd.add_argument("image", type=Path, help="binaire UEFI (.efi/.fd/.bin/.img)")
@@ -178,6 +180,8 @@ def main() -> int:
                 pcrs = tpm_tbs.read_pcrs(transport)
                 data = {**tpm_tbs.identity(transport), "pcrs": {str(k): v for k, v in pcrs.items()},
                         "pcr_composite": tpm_tbs.pcr_composite(pcrs), "quote": None}
+                if args.quote:
+                    data["quote"] = tpm_tbs.make_quote(transport)
             finally:
                 close()
         except tpm_tbs.TpmError as exc:

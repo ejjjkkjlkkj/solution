@@ -112,6 +112,15 @@ def render_tpm(data: dict[str, Any]) -> str:
         f"Version du firmware : {data.get('firmware_version') or 'inconnue'}.",
         f"Registres PCR lus : {len(pcrs)}.",
         f"Condensat de lecture : {data.get('pcr_composite', 'inconnu')}.",
-        "Lecture seule : aucun quote n'a ete produit, le gate tpm_quote n'est pas atteste.",
     ]
+    quote = data.get("quote")
+    if quote:
+        v = quote["verification"]
+        body.append("Quote produit et verifie localement : " + ("valide." if v["valid"] else "INVALIDE.")
+                    + " Signature " + ("bonne" if v["signature_valid"] else "mauvaise")
+                    + ", nonce " + ("conforme" if v["nonce_match"] else "different")
+                    + ", condensat de PCR " + ("conforme." if v["pcr_digest_match"] else "different.")
+                    + " Cle transitoire vidangee.")
+    else:
+        body.append("Lecture seule : aucun quote n'a ete produit, le gate tpm_quote n'est pas atteste.")
     return _lines("Lecture du TPM reussie.", body)

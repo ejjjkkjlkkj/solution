@@ -1,3 +1,4 @@
+import hashlib
 import struct
 import unittest
 
@@ -32,6 +33,52 @@ class FakeTpm:
             body += struct.pack(">I", len(idx)) + b"".join(struct.pack(">H", 32) + bytes([i]) * 32 for i in idx)
             return _resp(body)
         return _resp(b"", rc=0x143)
+
+
+class SigningFakeTpm(FakeTpm):
+    """Ajoute CreatePrimary / Quote / FlushContext avec une vraie signature ECDSA P-256."""
+
+    D = 0x1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF
+
+    def __init__(self, fail_quote=False):
+        super().__init__()
+        self.flushed, self.fail_quote = [], fail_quote
+        self.pub = t._mul(self.D, t._G)
+
+    def __call__(self, cmd):
+        tag, _size, code = struct.unpack_from(">HII", cmd, 0)
+        if code == t.TPM_CC_CREATE_PRIMARY:
+            x, y = (v.to_bytes(32, "big") for v in self.pub)
+            pub = (struct.pack(">HHI", t.TPM_ALG_ECC, t.TPM_ALG_SHA256, 0x50072) + struct.pack(">H", 0)
+                   + struct.pack(">HHHHH", t.TPM_ALG_NULL, t.TPM_ALG_ECDSA, t.TPM_ALG_SHA256, 3, t.TPM_ALG_NULL)
+                   + t._b2(x) + t._b2(y))
+            params = t._b2(pub) + t._b2(b"") * 3
+            return struct.pack(">HII", 0x8002, 10 + 8 + len(params) + 5, 0) + struct.pack(">II", 0x80000000, len(params)) + params + b"\x00\x00\x00\x00\x00"
+        if code == t.TPM_CC_FLUSH_CONTEXT:
+            self.flushed.append(struct.unpack_from(">I", cmd, 10)[0])
+            return _resp(b"")
+        if code == t.TPM_CC_QUOTE:
+            if self.fail_quote:
+                return _resp(b"", rc=0x98E)
+            # en-tete de la commande : tag size code handle authSize auth(9) nonce...
+            pos = 10 + 4 + 4 + 9
+            (n,) = struct.unpack_from(">H", cmd, pos)
+            nonce = cmd[pos + 2:pos + 2 + n]
+            pos += 2 + n + 4  # schema
+            _count, _alg, sz = struct.unpack_from(">IHB", cmd, pos)
+            bits = cmd[pos + 7:pos + 7 + sz]
+            idx = [b * 8 + k for b in range(sz) for k in range(8) if bits[b] >> k & 1]
+            digest = hashlib.sha256(b"".join(bytes([i]) * 32 for i in idx)).digest()
+            attest = (struct.pack(">IH", t.TPM_GENERATED_VALUE, t.TPM_ST_ATTEST_QUOTE) + t._b2(b"\x00" * 34)
+                      + t._b2(nonce) + struct.pack(">QIIBQ", 1, 0, 0, 1, 7)
+                      + struct.pack(">IHB", 1, t.TPM_ALG_SHA256, sz) + bits + t._b2(digest))
+            z = int.from_bytes(hashlib.sha256(attest).digest(), "big")
+            k = 0x1111111111111111111111111111111111111111111111111111111111111111
+            r = t._mul(k, t._G)[0] % t._N
+            s = pow(k, -1, t._N) * (z + r * self.D) % t._N
+            params = t._b2(attest) + struct.pack(">HH", t.TPM_ALG_ECDSA, t.TPM_ALG_SHA256) + t._b2(r.to_bytes(32, "big")) + t._b2(s.to_bytes(32, "big"))
+            return struct.pack(">HII", 0x8002, 10 + 4 + len(params) + 5, 0) + struct.pack(">I", len(params)) + params + b"\x00\x00\x00\x00\x00"
+        return super().__call__(cmd)
 
 
 class TpmTests(unittest.TestCase):
@@ -73,6 +120,28 @@ class TpmTests(unittest.TestCase):
         for bad in ((), (1, 1), (24,), tuple(range(9))):
             with self.assertRaises(ValueError):
                 t.read_pcrs(FakeTpm(), bad)
+
+    def test_quote_roundtrip_and_tamper_detection(self):
+        tpm = SigningFakeTpm()
+        q = t.make_quote(tpm, (0, 1, 2))
+        self.assertTrue(q["verification"]["valid"], q["verification"])
+        self.assertEqual(tpm.flushed, [0x80000000])
+        self.assertTrue(q["key_flushed"])
+        pub = (int(q["public_key"]["x"], 16), int(q["public_key"]["y"], 16))
+        raw = {"attest": bytes.fromhex(q["attest"]), "r": int(q["signature"]["r"], 16), "s": int(q["signature"]["s"], 16)}
+        pcrs = t.read_pcrs(tpm, (0, 1, 2))
+        nonce = bytes.fromhex(q["nonce"])
+        self.assertTrue(t.verify_quote(raw, pub, nonce, pcrs)["valid"])
+        self.assertFalse(t.verify_quote(raw, pub, b"x" * 32, pcrs)["nonce_match"])
+        self.assertFalse(t.verify_quote({**raw, "s": raw["s"] ^ 1}, pub, nonce, pcrs)["signature_valid"])
+        bad = {**pcrs, 0: "ff" * 32}
+        self.assertFalse(t.verify_quote(raw, pub, nonce, bad)["pcr_digest_match"])
+
+    def test_key_is_flushed_when_quote_fails(self):
+        tpm = SigningFakeTpm(fail_quote=True)
+        with self.assertRaises(t.TpmError):
+            t.make_quote(tpm, (0,))
+        self.assertEqual(tpm.flushed, [0x80000000])
 
     def test_speakable_tpm(self):
         out = speakable.render_tpm({"manufacturer": "AMD", "firmware_version": "1", "pcrs": {"0": "ab" * 32},
