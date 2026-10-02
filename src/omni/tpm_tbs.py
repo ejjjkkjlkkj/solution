@@ -324,6 +324,162 @@ def make_quote(transport: Transport, indices: tuple[int, ...] = tuple(range(8)),
             "verification": verdict, "key_flushed": True}
 
 
+TPM_CC_START_AUTH_SESSION = 0x00000176
+TPM_CC_POLICY_SECRET = 0x00000151
+TPM_CC_MAKE_CREDENTIAL = 0x00000168
+TPM_CC_ACTIVATE_CREDENTIAL = 0x00000147
+TPM_RH_ENDORSEMENT = 0x4000000B
+TPM_RH_NULL = 0x40000007
+TPM_ALG_RSA = 0x0001
+TPM_ALG_AES = 0x0006
+TPM_ALG_CFB = 0x0043
+TPM_SE_POLICY = 0x01
+# Politique d'autorisation standard TCG de l'EK (PolicySecret sur la hierarchie endorsement)
+EK_AUTH_POLICY = bytes.fromhex("837197674484b3f81a90cc8d46a5d724fd52d76e06520b64f2a1da1b331469aa")
+
+
+def _auth_command_multi(code: int, handles: bytes, auths: list[bytes], params: bytes) -> bytes:
+    area = b"".join(auths)
+    body = handles + struct.pack(">I", len(area)) + area + params
+    return struct.pack(">HII", TPM_ST_SESSIONS, 10 + len(body), code) + body
+
+
+def _pw_auth() -> bytes:
+    return struct.pack(">IHBH", TPM_RS_PW, 0, 0, 0)
+
+
+def ek_public_area() -> bytes:
+    """Gabarit EK RSA-2048 standard TCG (celui du certificat EK du constructeur)."""
+    attrs = 0x000300B2  # fixedTPM | fixedParent | sensitiveDataOrigin | adminWithPolicy | restricted | decrypt
+    return (struct.pack(">HHI", TPM_ALG_RSA, TPM_ALG_SHA256, attrs) + _b2(EK_AUTH_POLICY)
+            + struct.pack(">HHH", TPM_ALG_AES, 128, TPM_ALG_CFB) + struct.pack(">H", TPM_ALG_NULL)
+            + struct.pack(">HI", 2048, 0) + _b2(b"\x00" * 256))
+
+
+def ak_public_area() -> bytes:
+    attrs = (1 << 1) | (1 << 4) | (1 << 5) | (1 << 6) | (1 << 16) | (1 << 18)
+    return (struct.pack(">HHI", TPM_ALG_ECC, TPM_ALG_SHA256, attrs) + _b2(b"")
+            + struct.pack(">H", TPM_ALG_NULL) + struct.pack(">HH", TPM_ALG_ECDSA, TPM_ALG_SHA256)
+            + struct.pack(">HH", TPM_ECC_NIST_P256, TPM_ALG_NULL) + _b2(b"") + _b2(b""))
+
+
+def create_primary(transport: Transport, hierarchy: int, public_area: bytes) -> tuple[int, bytes, bytes]:
+    """CreatePrimary transitoire ; renvoie (handle, TPMT_PUBLIC renvoye, nom = nameAlg||SHA-256(public))."""
+    params = _b2(_b2(b"") + _b2(b"")) + _b2(public_area) + _b2(b"") + struct.pack(">I", 0)
+    body = _check(transport(_auth_command(TPM_CC_CREATE_PRIMARY, struct.pack(">I", hierarchy), params)))
+    _need(body, 0, 10)
+    handle, _psize, pub_size = struct.unpack_from(">IIH", body, 0)
+    _need(body, 10, pub_size)
+    pub = body[10:10 + pub_size]
+    return handle, pub, struct.pack(">H", TPM_ALG_SHA256) + hashlib.sha256(pub).digest()
+
+
+def public_attributes(pub: bytes) -> int:
+    return struct.unpack_from(">I", pub, 4)[0]
+
+
+def rsa_modulus(pub: bytes) -> bytes:
+    (n,) = struct.unpack_from(">H", pub, 8)
+    p = 8 + 2 + n + 6 + 2 + 2 + 4  # authPolicy, sym AES, scheme, keyBits, exponent
+    (m,) = struct.unpack_from(">H", pub, p)
+    if p + 2 + m > len(pub):
+        raise TpmError("truncated RSA public area")
+    return pub[p + 2:p + 2 + m]
+
+
+def ecc_point(pub: bytes) -> tuple[int, int]:
+    (n,) = struct.unpack_from(">H", pub, 8)
+    p = 8 + 2 + n + 2 + 4 + 4
+    (xl,) = struct.unpack_from(">H", pub, p)
+    x = int.from_bytes(pub[p + 2:p + 2 + xl], "big")
+    p += 2 + xl
+    (yl,) = struct.unpack_from(">H", pub, p)
+    return x, int.from_bytes(pub[p + 2:p + 2 + yl], "big")
+
+
+def start_policy_session(transport: Transport) -> int:
+    nonce = get_random(transport, 16)
+    params = (struct.pack(">II", TPM_RH_NULL, TPM_RH_NULL) + _b2(nonce) + _b2(b"")
+              + struct.pack(">BHH", TPM_SE_POLICY, TPM_ALG_NULL, TPM_ALG_SHA256))
+    body = _check(transport(_command(TPM_CC_START_AUTH_SESSION, params)))
+    _need(body, 0, 4)
+    return struct.unpack_from(">I", body, 0)[0]
+
+
+def policy_secret_endorsement(transport: Transport, session: int) -> None:
+    handles = struct.pack(">II", TPM_RH_ENDORSEMENT, session)
+    params = _b2(b"") + _b2(b"") + _b2(b"") + struct.pack(">i", 0)
+    _check(transport(_auth_command_multi(TPM_CC_POLICY_SECRET, handles, [_pw_auth()], params)))
+
+
+def make_credential(transport: Transport, ek: int, secret: bytes, ak_name: bytes) -> tuple[bytes, bytes]:
+    body = _check(transport(_command(TPM_CC_MAKE_CREDENTIAL, struct.pack(">I", ek) + _b2(secret) + _b2(ak_name))))
+    _need(body, 0, 2)
+    (n,) = struct.unpack_from(">H", body, 0)
+    _need(body, 2 + n, 2)
+    blob = body[2:2 + n]
+    (m,) = struct.unpack_from(">H", body, 2 + n)
+    _need(body, 4 + n, m)
+    return blob, body[4 + n:4 + n + m]
+
+
+def activate_credential(transport: Transport, ak: int, ek: int, session: int, blob: bytes, enc_secret: bytes) -> bytes:
+    session_auth = struct.pack(">IHBH", session, 0, 0, 0)  # session de politique, utilisee une fois puis fermee
+    handles = struct.pack(">II", ak, ek)
+    body = _check(transport(_auth_command_multi(TPM_CC_ACTIVATE_CREDENTIAL, handles, [_pw_auth(), session_auth],
+                                                _b2(blob) + _b2(enc_secret))))
+    _need(body, 0, 6)
+    (n,) = struct.unpack_from(">H", body, 4)
+    _need(body, 6, n)
+    return body[6:6 + n]
+
+
+def attested_quote(transport: Transport, ek_modulus_expected: bytes | None = None,
+                   indices: tuple[int, ...] = tuple(range(8))) -> dict:
+    """Quote signe par une AK dont la residence dans le TPM de l'EK est prouvee (MakeCredential/ActivateCredential).
+
+    ``ek_modulus_expected`` : module RSA de l'EK lu dans le certificat du constructeur. Tous les objets
+    transitoires et la session sont vidanges, y compris en cas d'echec.
+    """
+    handles: list[int] = []
+    session = None
+    try:
+        ek, ek_pub, _ek_name = create_primary(transport, TPM_RH_ENDORSEMENT, ek_public_area())
+        handles.append(ek)
+        ak, ak_pub, ak_name = create_primary(transport, TPM_RH_OWNER, ak_public_area())
+        handles.append(ak)
+        modulus = rsa_modulus(ek_pub)
+        secret = get_random(transport, 32)
+        blob, enc = make_credential(transport, ek, secret, ak_name)
+        session = start_policy_session(transport)
+        policy_secret_endorsement(transport, session)
+        recovered = activate_credential(transport, ak, ek, session, blob, enc)
+        session = None  # consommee par ActivateCredential
+        nonce = get_random(transport, 32)
+        before = read_pcrs(transport, indices)
+        q = quote(transport, ak, nonce, indices)
+        after = read_pcrs(transport, indices)
+    finally:
+        for h in ([session] if session else []) + handles[::-1]:
+            try:
+                flush_context(transport, h)
+            except TpmError:
+                pass
+    attrs = public_attributes(ak_pub)
+    must = (1 << 1) | (1 << 4) | (1 << 16) | (1 << 18)  # fixedTPM, fixedParent, restricted, sign
+    verdict = verify_quote(q, ecc_point(ak_pub), nonce, before)
+    verdict["pcrs_stable"] = before == after
+    verdict["ak_is_restricted_tpm_resident"] = attrs & must == must
+    verdict["ak_bound_to_ek"] = recovered == secret
+    verdict["ek_matches_certificate"] = None if ek_modulus_expected is None else modulus == ek_modulus_expected
+    verdict["valid"] = all(v is not False for k, v in verdict.items() if k != "valid") and verdict["valid"]
+    x, y = ecc_point(ak_pub)
+    return {"nonce": nonce.hex(), "ek_modulus": modulus.hex(), "ak_name": ak_name.hex(),
+            "ak_public": {"x": f"{x:064x}", "y": f"{y:064x}"}, "attest": q["attest"].hex(),
+            "signature": {"r": f"{q['r']:064x}", "s": f"{q['s']:064x}"}, "verification": verdict,
+            "objects_flushed": True}
+
+
 def windows_transport() -> tuple[Transport, Callable[[], None]]:
     """Ouvre un contexte TBS TPM 2.0 ; renvoie (transport, close)."""
     if not sys.platform.startswith("win"):

@@ -113,6 +113,17 @@ def render_tpm(data: dict[str, Any]) -> str:
         f"Registres PCR lus : {len(pcrs)}.",
         f"Condensat de lecture : {data.get('pcr_composite', 'inconnu')}.",
     ]
+    att = data.get("attested_quote")
+    if att:
+        v, cert = att["verification"], att.get("ek_certificate", {})
+        body.append("Quote certifie : " + ("valide." if v["valid"] else "INVALIDE.")
+                    + " Signature " + ("bonne" if v["signature_valid"] else "mauvaise")
+                    + ", cle d'attestation liee a la cle d'endossement : " + ("oui" if v["ak_bound_to_ek"] else "non")
+                    + ", cle d'endossement identique au certificat du constructeur : "
+                    + ("oui" if v["ek_matches_certificate"] else "non") + ".")
+        body.append(f"Certificat EK : emis par {cert.get('issuer') or 'inconnu'}, valable jusqu'au "
+                    f"{str(cert.get('not_after', 'inconnu'))[:10]}. La chaine jusqu'a la racine du constructeur "
+                    "n'est pas verifiee.")
     quote = data.get("quote")
     if quote:
         v = quote["verification"]
@@ -121,6 +132,6 @@ def render_tpm(data: dict[str, Any]) -> str:
                     + ", nonce " + ("conforme" if v["nonce_match"] else "different")
                     + ", condensat de PCR " + ("conforme." if v["pcr_digest_match"] else "different.")
                     + " Cle transitoire vidangee.")
-    else:
+    elif not att:
         body.append("Lecture seule : aucun quote n'a ete produit, le gate tpm_quote n'est pas atteste.")
     return _lines("Lecture du TPM reussie.", body)

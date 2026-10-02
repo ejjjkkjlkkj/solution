@@ -26,3 +26,27 @@ so the quote proves the reading is internally consistent and was signed by this
 TPM during this call, not the platform identity. It can fail on machines where the
 owner hierarchy is authorized or locked out; the error is reported and nothing is
 left loaded.
+
+## Certified quote (`--attest`)
+
+    omni tpm-read --attest --format text
+
+Adds the manufacturer certificate to the chain. All objects are transient and
+flushed, including on failure:
+
+1. An RSA-2048 endorsement key (EK) is created from the standard TCG template
+   and its modulus is compared with the EK certificate that Windows retrieved
+   from the manufacturer (`Get-TpmEndorsementKeyInfo`; on this AMD fTPM it is
+   not in TPM NV, so `omni.ek_certificate` only reads Windows' copy and
+   downloads nothing).
+2. An ECDSA P-256 restricted signing key (AK) is created; its attributes
+   (fixedTPM, fixedParent, restricted, sign) are checked.
+3. `MakeCredential` / `ActivateCredential` (policy session with
+   `PolicySecret` on the endorsement hierarchy) proves the AK lives in the
+   same TPM as the certified EK.
+4. The AK signs `TPM2_Quote`; signature, nonce, PCR digest and PCR stability
+   are verified locally.
+
+Limits: `MakeCredential` is run by the same TPM, so the binding is proven by
+the TPM rather than by independent software; the certificate chain up to the
+AMD root is not verified (that root is not in the Windows trust store).

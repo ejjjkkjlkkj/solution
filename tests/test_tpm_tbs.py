@@ -44,16 +44,35 @@ class SigningFakeTpm(FakeTpm):
         super().__init__()
         self.flushed, self.fail_quote = [], fail_quote
         self.pub = t._mul(self.D, t._G)
+        self.ek_modulus, self.secret, self.bad_activation = b"\xab" * 256, b"", False
 
     def __call__(self, cmd):
         tag, _size, code = struct.unpack_from(">HII", cmd, 0)
-        if code == t.TPM_CC_CREATE_PRIMARY:
+        if code == t.TPM_CC_CREATE_PRIMARY and struct.unpack_from(">I", cmd, 10)[0] != t.TPM_RH_ENDORSEMENT:
             x, y = (v.to_bytes(32, "big") for v in self.pub)
             pub = (struct.pack(">HHI", t.TPM_ALG_ECC, t.TPM_ALG_SHA256, 0x50072) + struct.pack(">H", 0)
                    + struct.pack(">HHHHH", t.TPM_ALG_NULL, t.TPM_ALG_ECDSA, t.TPM_ALG_SHA256, 3, t.TPM_ALG_NULL)
                    + t._b2(x) + t._b2(y))
             params = t._b2(pub) + t._b2(b"") * 3
             return struct.pack(">HII", 0x8002, 10 + 8 + len(params) + 5, 0) + struct.pack(">II", 0x80000000, len(params)) + params + b"\x00\x00\x00\x00\x00"
+        if code == t.TPM_CC_START_AUTH_SESSION:
+            return _resp(struct.pack(">I", 0x03000000) + t._b2(b"\x07" * 16))
+        if code == t.TPM_CC_POLICY_SECRET:
+            return _resp(struct.pack(">I", 0) + b"\x00" * 4)
+        if code == t.TPM_CC_MAKE_CREDENTIAL:
+            secret_len = struct.unpack_from(">H", cmd, 14)[0]
+            self.secret = cmd[16:16 + secret_len]
+            return _resp(t._b2(b"blob") + t._b2(b"enc"))
+        if code == t.TPM_CC_ACTIVATE_CREDENTIAL:
+            if self.bad_activation:
+                return _resp(b"", rc=0x9D)
+            body = struct.pack(">I", 2 + len(self.secret)) + t._b2(self.secret)
+            return struct.pack(">HII", 0x8002, 10 + len(body) + 5, 0) + body + b"\x00" * 5
+        if code == t.TPM_CC_CREATE_PRIMARY and struct.unpack_from(">I", cmd, 10)[0] == t.TPM_RH_ENDORSEMENT:
+            pub = t.ek_public_area()[:-258] + t._b2(self.ek_modulus)
+            params = t._b2(pub) + t._b2(b"") * 3
+            return (struct.pack(">HII", 0x8002, 10 + 8 + len(params) + 5, 0)
+                    + struct.pack(">II", 0x80000001, len(params)) + params + b"\x00" * 5)
         if code == t.TPM_CC_FLUSH_CONTEXT:
             self.flushed.append(struct.unpack_from(">I", cmd, 10)[0])
             return _resp(b"")
@@ -136,6 +155,26 @@ class TpmTests(unittest.TestCase):
         self.assertFalse(t.verify_quote({**raw, "s": raw["s"] ^ 1}, pub, nonce, pcrs)["signature_valid"])
         bad = {**pcrs, 0: "ff" * 32}
         self.assertFalse(t.verify_quote(raw, pub, nonce, bad)["pcr_digest_match"])
+
+    def test_attested_quote_binds_ak_to_ek_certificate(self):
+        tpm = SigningFakeTpm()
+        out = t.attested_quote(tpm, tpm.ek_modulus, (0, 1))
+        self.assertTrue(out["verification"]["valid"], out["verification"])
+        self.assertTrue(out["verification"]["ak_bound_to_ek"])
+        self.assertTrue(out["verification"]["ek_matches_certificate"])
+        self.assertEqual(sorted(tpm.flushed), [0x80000000, 0x80000001])
+        wrong = t.attested_quote(SigningFakeTpm(), b"\x00" * 256, (0, 1))
+        self.assertFalse(wrong["verification"]["ek_matches_certificate"])
+        self.assertFalse(wrong["verification"]["valid"])
+
+    def test_attested_quote_flushes_everything_on_failed_activation(self):
+        tpm = SigningFakeTpm()
+        tpm.bad_activation = True
+        with self.assertRaises(t.TpmError):
+            t.attested_quote(tpm, None, (0,))
+        self.assertIn(0x80000000, tpm.flushed)
+        self.assertIn(0x80000001, tpm.flushed)
+        self.assertIn(0x03000000, tpm.flushed)
 
     def test_key_is_flushed_when_quote_fails(self):
         tpm = SigningFakeTpm(fail_quote=True)

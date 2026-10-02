@@ -15,7 +15,7 @@ All notable repository changes are tracked here.
 
 - **Host hardware inventory** (`omni.host_inventory`, `omni host-inventory`): stdlib-only read of SMBIOS (BIOS, system, Type 1 UUID), registry (board, CPU, Secure Boot, HDA, keyboard) and TBS (TPM). Fail-closed identity check for the ASUS M1603QA / Ryzen 7 5800H. Attests no hardware gate. Docs: `docs/HOST_INVENTORY.md`; tests: `tests/test_host_inventory.py`.
 - **Screen-reader output** (`omni.speakable`, `--format text` / `OMNI_FORMAT`): linear French reports, verdict first, one sentence per line, no decorative symbols, explicit end line. JSON stays the default. Docs: `docs/SCREEN_READER_OUTPUT.md`; tests: `tests/test_speakable.py`.
-- **Read-only TPM client** (`omni.tpm_tbs`, `omni tpm-read`): pure `ctypes` TBS access for TPM 2.0 properties, random bytes and PCR 0-7. `--quote` (opt-in) adds a transient ECDSA P-256 key, a TPM2_Quote and local verification; the key is always flushed. Docs: `docs/TPM_READ.md`; tests: `tests/test_tpm_tbs.py`.
+- **Read-only TPM client** (`omni.tpm_tbs`, `omni tpm-read`): pure `ctypes` TBS access for TPM 2.0 properties, random bytes and PCR 0-7. `--quote` (opt-in) adds a transient ECDSA P-256 key, a TPM2_Quote and local verification; `--attest` binds the AK to the EK and checks it against the manufacturer EK certificate. Transient objects are always flushed. Docs: `docs/TPM_READ.md`; tests: `tests/test_tpm_tbs.py`.
 
 ### Changed
 - `omni.ceiling` exposes `CHAIN_GATE_KEYS` and `evaluate_chain()` for runtime evaluation. `REQUIRED_SOFTWARE_GATES` is unchanged (12 CI gates still required for `SOFTWARE_CEILING_PASS`).

@@ -5,7 +5,7 @@ import json
 import os
 from pathlib import Path
 
-from . import ceiling, end_to_end, firmware, host_chain, host_inventory, ifr, speakable, tpm_tbs, uefi211, voice_frontend, voice_pipeline, voice_quality
+from . import ceiling, ek_certificate, end_to_end, firmware, host_chain, host_inventory, ifr, speakable, tpm_tbs, uefi211, voice_frontend, voice_pipeline, voice_quality
 
 
 def _load_manifest(path: Path, label: str) -> dict[str, str]:
@@ -78,6 +78,8 @@ def main() -> int:
     tpm_cmd = sub.add_parser("tpm-read", help="lecture du TPM 2.0 (proprietes, PCR 0 a 7) ; --quote ajoute un quote")
     tpm_cmd.add_argument("--quote", action="store_true",
                          help="ecrit dans le TPM : cree une cle transitoire, signe un quote, la vidange")
+    tpm_cmd.add_argument("--attest", action="store_true",
+                         help="quote signe par une AK liee a l'EK, comparee au certificat EK du constructeur (ecrit dans le TPM)")
 
     chain_cmd = sub.add_parser("chain-report", help="rapport de bout en bout firmware + host")
     chain_cmd.add_argument("image", type=Path, help="binaire UEFI (.efi/.fd/.bin/.img)")
@@ -182,6 +184,14 @@ def main() -> int:
                         "pcr_composite": tpm_tbs.pcr_composite(pcrs), "quote": None}
                 if args.quote:
                     data["quote"] = tpm_tbs.make_quote(transport)
+                if args.attest:
+                    cert = ek_certificate.rsa_certificate(ek_certificate.read_windows())
+                    if cert is None:
+                        raise tpm_tbs.TpmError("aucun certificat EK RSA disponible dans Windows")
+                    result = tpm_tbs.attested_quote(transport, bytes.fromhex(cert["modulus"]))
+                    result["ek_certificate"] = {k: cert[k] for k in
+                                                ("subject", "issuer", "serial", "not_before", "not_after", "sha256", "aia")}
+                    data["attested_quote"] = result
             finally:
                 close()
         except tpm_tbs.TpmError as exc:
