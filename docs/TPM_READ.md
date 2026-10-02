@@ -48,5 +48,11 @@ flushed, including on failure:
    are verified locally.
 
 Limits: `MakeCredential` is run by the same TPM, so the binding is proven by
-the TPM rather than by independent software; the certificate chain up to the
-AMD root is not verified (that root is not in the Windows trust store).
+the TPM rather than by independent software; the AMD root is not in the
+Windows trust store.
+
+`--attest --fetch-chain` additionally downloads the certificate chain from the
+AIA URLs inside the EK certificate (HTTP, needs PowerShell 7) and verifies every
+signature up to the self-signed root (EK <- PRG-RN <- AMDTPM on this machine).
+The downloaded SHA-256 values are reported; the root's authenticity is not
+anchored in any trust store, only its signatures are checked.

@@ -105,6 +105,15 @@ def render_inventory(data: dict[str, Any], identity: dict[str, Any] | None = Non
     return _lines(verdict, body)
 
 
+def _chain_sentence(chain: dict | None) -> str:
+    if chain is None:
+        return "La chaine jusqu'a la racine du constructeur n'est pas verifiee."
+    if chain.get("signatures_valid"):
+        return ("Les signatures de la chaine jusqu'a la racine du constructeur sont valides ; cette racine, "
+                "telechargee chez le constructeur, n'est pas dans le magasin de confiance de Windows.")
+    return f"La chaine du certificat est INVALIDE : {chain.get('status')}."
+
+
 def render_tpm(data: dict[str, Any]) -> str:
     pcrs = data.get("pcrs", {})
     body = [
@@ -122,8 +131,7 @@ def render_tpm(data: dict[str, Any]) -> str:
                     + ", cle d'endossement identique au certificat du constructeur : "
                     + ("oui" if v["ek_matches_certificate"] else "non") + ".")
         body.append(f"Certificat EK : emis par {cert.get('issuer') or 'inconnu'}, valable jusqu'au "
-                    f"{str(cert.get('not_after', 'inconnu'))[:10]}. La chaine jusqu'a la racine du constructeur "
-                    "n'est pas verifiee.")
+                    f"{str(cert.get('not_after', 'inconnu'))[:10]}. " + _chain_sentence(cert.get("chain")))
     quote = data.get("quote")
     if quote:
         v = quote["verification"]

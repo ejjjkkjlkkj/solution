@@ -78,6 +78,8 @@ def main() -> int:
     tpm_cmd = sub.add_parser("tpm-read", help="lecture du TPM 2.0 (proprietes, PCR 0 a 7) ; --quote ajoute un quote")
     tpm_cmd.add_argument("--quote", action="store_true",
                          help="ecrit dans le TPM : cree une cle transitoire, signe un quote, la vidange")
+    tpm_cmd.add_argument("--fetch-chain", action="store_true",
+                         help="avec --attest : telecharge la chaine AIA du certificat EK et verifie ses signatures")
     tpm_cmd.add_argument("--attest", action="store_true",
                          help="quote signe par une AK liee a l'EK, comparee au certificat EK du constructeur (ecrit dans le TPM)")
 
@@ -191,6 +193,8 @@ def main() -> int:
                     result = tpm_tbs.attested_quote(transport, bytes.fromhex(cert["modulus"]))
                     result["ek_certificate"] = {k: cert[k] for k in
                                                 ("subject", "issuer", "serial", "not_before", "not_after", "sha256", "aia")}
+                    if args.fetch_chain:
+                        result["ek_certificate"]["chain"] = ek_certificate.verify_chain_online()
                     data["attested_quote"] = result
             finally:
                 close()

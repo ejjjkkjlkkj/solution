@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import subprocess
 import sys
 
@@ -53,3 +54,47 @@ def read_windows() -> list[dict]:
 
 def rsa_certificate(certs: list[dict]) -> dict | None:
     return next((c for c in certs if c.get("modulus")), None)
+
+
+_CHAIN_SCRIPT = r"""
+$ek = (Get-TpmEndorsementKeyInfo -Hash Sha256).AdditionalCertificates | Select-Object -First 1
+$X = [Security.Cryptography.X509Certificates.X509Certificate2]
+$extra = @(); $cur = $ek; $root = $null; $hashes = @()
+for ($i = 0; $i -lt 4 -and -not $root; $i++) {
+  $aia = $cur.Extensions | Where-Object { $_.Oid.Value -eq '1.3.6.1.5.5.7.1.1' }
+  $m = if ($aia) { [regex]::Match($aia.Format($false), 'URL=(https?://[^\s,]+)') } else { $null }
+  if (-not $m -or -not $m.Success) { break }
+  $data = (Invoke-WebRequest $m.Groups[1].Value -UseBasicParsing -TimeoutSec 30).Content
+  $c = $X::new([byte[]]$data)
+  $hashes += [pscustomobject]@{ url = $m.Groups[1].Value; subject = $c.Subject
+    sha256 = [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($c.RawData)).Replace('-', '').ToLower() }
+  if ($c.Subject -eq $c.Issuer) { $root = $c } else { $extra += $c; $cur = $c }
+}
+$ok = $false; $status = 'no self-signed root reached'
+if ($root) {
+  $ch = [Security.Cryptography.X509Certificates.X509Chain]::new()
+  $ch.ChainPolicy.TrustMode = 'CustomRootTrust'; $ch.ChainPolicy.CustomTrustStore.Add($root) | Out-Null
+  foreach ($c in $extra) { $ch.ChainPolicy.ExtraStore.Add($c) | Out-Null }
+  $ch.ChainPolicy.RevocationMode = 'NoCheck'; $ch.ChainPolicy.VerificationFlags = 'IgnoreNotTimeValid'
+  $ok = $ch.Build($ek); $status = ($ch.ChainStatus | ForEach-Object { $_.Status }) -join ','
+}
+ConvertTo-Json -InputObject ([pscustomobject]@{ signatures_valid = $ok; status = $status; fetched = @($hashes) }) -Depth 4 -Compress
+"""
+
+
+def verify_chain_online() -> dict:
+    """Telecharge la chaine AIA (HTTP, URL du certificat) et verifie les signatures jusqu'a la racine auto-signee.
+
+    La racine est celle publiee par le constructeur : ses signatures sont verifiees, mais son authenticite
+    n'est ancree dans aucun magasin de confiance ; les empreintes telechargees sont renvoyees.
+    """
+    if not sys.platform.startswith("win"):
+        raise EkCertificateError("EK chain check needs Windows")
+    shell = shutil.which("pwsh")  # TrustMode=CustomRootTrust n'existe pas dans Windows PowerShell 5.1 (.NET Framework)
+    if shell is None:
+        raise EkCertificateError("PowerShell 7 (pwsh) is required for the chain check")
+    proc = subprocess.run([shell, "-NoProfile", "-NonInteractive", "-Command", _CHAIN_SCRIPT],
+                          capture_output=True, text=True, timeout=180)
+    if proc.returncode != 0 or not proc.stdout.strip():
+        raise EkCertificateError(proc.stderr.strip() or "chain check failed")
+    return json.loads(proc.stdout)
