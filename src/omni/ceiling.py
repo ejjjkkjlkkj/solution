@@ -86,3 +86,46 @@ def evaluate(statuses: Mapping[str, str]) -> dict[str, object]:
 
 def evaluate_hardware(statuses: Mapping[str, str]) -> dict[str, object]:
     return _evaluate_exact(statuses, HARDWARE_GATES, "HARDWARE_BOUNDARY_PASS", "HARDWARE_EVIDENCE_INCOMPLETE")
+
+# ---------------------------------------------------------------------------
+# Chain accessibilite + securite : optionnel, evalue en runtime
+# ---------------------------------------------------------------------------
+# Ces gates ne sont PAS dans REQUIRED_SOFTWARE_GATES : ils sont valides en
+# runtime via `omni chain-report` / `omni host-scan` / `omni uefi211-check`.
+# Ils refletent la disponibilite locale des outils d'accessibilite et de la
+# pile reseau (VPN / IDS / IPS) -- ce qui depend de la machine hote, pas
+# uniquement du code.
+
+CHAIN_GATE_KEYS: frozenset[str] = frozenset(
+    {
+        # Firmware UEFI 2.10/2.11
+        "uefi_211_hii",
+        "uefi_211_audio",
+        "uefi_211_input",
+        "uefi_211_network",
+        # Host chain (run-time)
+        "host_a11y",
+        "host_vpn",
+        "host_ids",
+        "host_ips",
+        # Aggregat
+        "end_to_end_chain",
+    }
+)
+
+
+def evaluate_chain(stage_statuses: Mapping[str, str]) -> dict[str, object]:
+    """Evalue les gates de la chaine accessibilite/securite (optionnels).
+
+    Les cles sont celles de CHAIN_GATE_KEYS. Toutes les cles doivent etre
+    fournies ; toute valeur non PASS bloque le verdict.
+
+    Le verdict final est isole : SOFTWARE_CEILING_PASS n'est pas affecte par
+    ces gates (qui dependent du materiel hote).
+    """
+    return _evaluate_exact(
+        stage_statuses,
+        CHAIN_GATE_KEYS,
+        "CHAIN_REPORT_PASS",
+        "CHAIN_REPORT_INCOMPLETE",
+    )
